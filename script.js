@@ -1,5 +1,3 @@
-import * as THREE from 'three';
-
 let scene, camera, renderer;
 let leftWing, rightWing;
 let video, canvas, ctx;
@@ -76,20 +74,48 @@ class DebugLogger {
 }
 
 // === INITIALIZE ===
-async function init() {
+function init() {
   debugLogger = new DebugLogger();
   debugLogger.log('info', '=== AR Back Wings Starting ===');
+  
+  // Check if THREE is loaded
+  if (typeof THREE === 'undefined') {
+    debugLogger.log('error', 'Three.js not loaded!');
+    alert('Three.js failed to load. Please refresh the page.');
+    return;
+  }
+  debugLogger.log('success', 'Three.js loaded');
+
+  // Check if TensorFlow is loaded
+  if (typeof tf === 'undefined') {
+    debugLogger.log('error', 'TensorFlow.js not loaded!');
+    alert('TensorFlow.js failed to load. Please refresh the page.');
+    return;
+  }
+  debugLogger.log('success', 'TensorFlow.js loaded');
+
+  // Check if poseDetection is loaded
+  if (typeof poseDetection === 'undefined') {
+    debugLogger.log('error', 'Pose Detection not loaded!');
+    alert('Pose Detection failed to load. Please refresh the page.');
+    return;
+  }
+  debugLogger.log('success', 'Pose Detection loaded');
 
   // Setup start button
   const startBtn = document.getElementById('start-btn');
   const instructions = document.getElementById('instructions');
 
+  debugLogger.log('info', 'Setting up start button listener');
+  
   startBtn.addEventListener('click', async () => {
+    debugLogger.log('info', 'Start button clicked!');
     instructions.classList.add('hidden');
     await startAR();
   });
 
-  debugLogger.updateStatus('Tap Start button');
+  debugLogger.updateStatus('Ready - Tap Start');
+  debugLogger.log('success', 'Initialization complete');
 }
 
 // === START AR EXPERIENCE ===
@@ -325,5 +351,7 @@ function drawDebugPoints(ctx, keypoints) {
   });
 }
 
-// === START ===
-init();
+// === START WHEN PAGE LOADS ===
+window.addEventListener('DOMContentLoaded', () => {
+  init();
+});
