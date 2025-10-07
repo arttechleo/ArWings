@@ -17,6 +17,25 @@
   <div id="container"></div>
   <video id="video" autoplay playsinline></video>
 
+  <!-- Debug Panel -->
+  <div id="debug-panel">
+    <div id="debug-header">
+      <h3>Debug Console</h3>
+      <button id="toggle-debug">Minimize</button>
+      <button id="clear-debug">Clear</button>
+    </div>
+    <div id="debug-content">
+      <div id="debug-status">
+        <div><strong>Status:</strong> <span id="status-text">Initializing...</span></div>
+        <div><strong>Video:</strong> <span id="video-status">Not ready</span></div>
+        <div><strong>Model:</strong> <span id="model-status">Not loaded</span></div>
+        <div><strong>Pose Detected:</strong> <span id="pose-status">No</span></div>
+        <div><strong>FPS:</strong> <span id="fps-counter">0</span></div>
+      </div>
+      <div id="debug-logs"></div>
+    </div>
+  </div>
+
   <script type="module" src="script.js"></script>
 </body>
 </html>
