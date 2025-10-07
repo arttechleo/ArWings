@@ -24,14 +24,152 @@ body {
   z-index: -1;
 }
 
-/* Optional: Loading indicator */
-#loading {
+/* Debug Panel Styles */
+#debug-panel {
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: white;
-  font-size: 18px;
-  z-index: 100;
-  text-align: center;
+  top: 10px;
+  right: 10px;
+  width: 350px;
+  max-height: 80vh;
+  background: rgba(0, 0, 0, 0.9);
+  border: 2px solid #00ff00;
+  border-radius: 8px;
+  color: #00ff00;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  z-index: 1000;
+  overflow: hidden;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
+}
+
+#debug-panel.minimized #debug-content {
+  display: none;
+}
+
+#debug-header {
+  background: rgba(0, 255, 0, 0.2);
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #00ff00;
+}
+
+#debug-header h3 {
+  margin: 0;
+  font-size: 14px;
+  flex: 1;
+}
+
+#debug-header button {
+  background: #00ff00;
+  color: black;
+  border: none;
+  padding: 5px 10px;
+  margin-left: 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: bold;
+}
+
+#debug-header button:hover {
+  background: #00cc00;
+}
+
+#debug-content {
+  padding: 10px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+#debug-status {
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #00ff00;
+}
+
+#debug-status div {
+  margin: 5px 0;
+  line-height: 1.4;
+}
+
+#debug-status strong {
+  color: #ffff00;
+}
+
+#debug-logs {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.debug-log {
+  margin: 5px 0;
+  padding: 5px;
+  border-left: 3px solid #00ff00;
+  padding-left: 8px;
+  word-wrap: break-word;
+}
+
+.debug-log.error {
+  border-left-color: #ff0000;
+  color: #ff6666;
+}
+
+.debug-log.warning {
+  border-left-color: #ffaa00;
+  color: #ffcc66;
+}
+
+.debug-log.info {
+  border-left-color: #00aaff;
+  color: #66ccff;
+}
+
+.debug-log.success {
+  border-left-color: #00ff00;
+  color: #66ff66;
+}
+
+.debug-timestamp {
+  color: #888;
+  font-size: 10px;
+  margin-right: 5px;
+}
+
+/* Scrollbar styling for debug panel */
+#debug-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+#debug-content::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+#debug-content::-webkit-scrollbar-thumb {
+  background: #00ff00;
+  border-radius: 4px;
+}
+
+#debug-content::-webkit-scrollbar-thumb:hover {
+  background: #00cc00;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  #debug-panel {
+    width: 90vw;
+    right: 5vw;
+    top: 5px;
+    max-height: 50vh;
+  }
+  
+  #debug-header h3 {
+    font-size: 12px;
+  }
+  
+  #debug-header button {
+    font-size: 10px;
+    padding: 4px 8px;
+  }
 }
