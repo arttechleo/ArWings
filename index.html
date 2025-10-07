@@ -40,7 +40,7 @@
     </div>
     <div id="debug-content">
       <div id="debug-status">
-        <div><strong>Status:</strong> <span id="status-text">Ready</span></div>
+        <div><strong>Status:</strong> <span id="status-text">Loading...</span></div>
         <div><strong>Camera:</strong> <span id="video-status">Not started</span></div>
         <div><strong>Model:</strong> <span id="model-status">Not loaded</span></div>
         <div><strong>Shoulders:</strong> <span id="pose-status">Not detected</span></div>
@@ -50,6 +50,7 @@
     </div>
   </div>
 
-  <script type="module" src="script.js"></script>
+  <!-- Load script normally (not as module) -->
+  <script src="script.js"></script>
 </body>
 </html>
