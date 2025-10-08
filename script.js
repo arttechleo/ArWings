@@ -512,7 +512,7 @@ function positionWingsOnBack(wings, leftShoulder, rightShoulder, spineCenter, de
   wings.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
   
   // Larger scale for visibility
-  const scaleFactor = scale * 1.0; // Increased from 0.01
+  const scaleFactor = scale * 10; // Increased from 0.01
   wings.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
   const baseRotX = -0.2;
