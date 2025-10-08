@@ -10,19 +10,16 @@
 
   <!-- Three.js -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-  
-  <!-- PLYLoader for Three.js -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/PLYLoader.js"></script>
 
-  <!-- Gaussian Splatting Loader -->
+  <!-- Gaussian Splatting for Three.js -->
   <script type="importmap">
     {
       "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-        "@lumaai/luma-web": "https://unpkg.com/@lumaai/luma-web@0.2.0/dist/library/luma-web.module.js"
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
       }
     }
   </script>
+  <script type="module" src="https://unpkg.com/@mkkellogg/gaussian-splats-3d@0.5.0/build/gaussian-splats-3d.module.js"></script>
 
   <!-- TensorFlow.js + Pose Detection -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0"></script>
@@ -64,6 +61,6 @@
     </div>
   </div>
 
-  <script src="script.js"></script>
+  <script type="module" src="script.js"></script>
 </body>
 </html>
