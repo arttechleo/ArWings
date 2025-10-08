@@ -12,17 +12,17 @@ let smoothedLeftPos = { x: 0, y: 0, z: 0 };
 let smoothedRightPos = { x: 0, y: 0, z: 0 };
 let smoothedLeftRot = { x: 0, y: 0, z: 0 };
 let smoothedRightRot = { x: 0, y: 0, z: 0 };
-const SMOOTHING_FACTOR = 0.4; // Increased for better responsiveness
+const SMOOTHING_FACTOR = 0.4;
 
 // Store initial shoulder distance to maintain wing spacing
 let baseShoulderDistance = null;
 
-// Gaussian Splatting support
-let leftSplat = null;
-let rightSplat = null;
-const USE_GAUSSIAN_SPLAT = false;
-const SPLAT_PATH_LEFT = 'assets/left_wing.splat';
-const SPLAT_PATH_RIGHT = 'assets/right_wing.splat';
+// PLY Model support
+let leftPlyMesh = null;
+let rightPlyMesh = null;
+const USE_PLY_MODEL = false; // Set to true when you have .ply files
+const PLY_PATH_LEFT = 'assets/left_wing.ply'; // Path to your left wing PLY file
+const PLY_PATH_RIGHT = 'assets/right_wing.ply'; // Path to your right wing PLY file
 
 // Camera configuration
 const CAMERA_MODE = 'environment';
@@ -124,10 +124,11 @@ function init() {
   }
   debugLogger.log('success', 'Pose Detection loaded');
 
-  if (typeof GaussianSplats3D !== 'undefined') {
-    debugLogger.log('success', 'Gaussian Splatting library loaded');
+  // Check PLYLoader availability
+  if (typeof THREE.PLYLoader !== 'undefined') {
+    debugLogger.log('success', 'PLYLoader available');
   } else {
-    debugLogger.log('warning', 'Gaussian Splatting library not available');
+    debugLogger.log('warning', 'PLYLoader not available');
   }
 
   const startBtn = document.getElementById('start-btn');
@@ -224,7 +225,7 @@ async function startAR() {
   }
 }
 
-// === SETUP THREE.JS (with Gaussian Splatting support) ===
+// === SETUP THREE.JS (with PLY support) ===
 async function setupThreeJS() {
   renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
   renderer.setSize(canvas.width, canvas.height);
@@ -239,35 +240,83 @@ async function setupThreeJS() {
   );
   camera.position.set(0, 0, 0);
 
-  if (USE_GAUSSIAN_SPLAT && typeof GaussianSplats3D !== 'undefined') {
-    debugLogger.log('info', 'Loading Gaussian Splat assets...');
-    debugLogger.updateAssetStatus('Loading Gaussian Splats...');
+  // Load assets based on configuration
+  if (USE_PLY_MODEL && typeof THREE.PLYLoader !== 'undefined') {
+    debugLogger.log('info', 'Loading PLY model assets...');
+    debugLogger.updateAssetStatus('Loading PLY models...');
     
     try {
-      const loader = new GaussianSplats3D.Loader();
+      const loader = new THREE.PLYLoader();
       
-      leftSplat = await loader.loadAsync(SPLAT_PATH_LEFT);
-      leftSplat.visible = false;
-      scene.add(leftSplat);
-      debugLogger.log('success', 'Left wing splat loaded');
+      // Load left wing
+      const leftGeometry = await new Promise((resolve, reject) => {
+        loader.load(
+          PLY_PATH_LEFT,
+          (geometry) => resolve(geometry),
+          (progress) => {
+            const percent = (progress.loaded / progress.total * 100).toFixed(0);
+            debugLogger.log('info', `Loading left wing: ${percent}%`);
+          },
+          (error) => reject(error)
+        );
+      });
       
-      rightSplat = await loader.loadAsync(SPLAT_PATH_RIGHT);
-      rightSplat.visible = false;
-      scene.add(rightSplat);
-      debugLogger.log('success', 'Right wing splat loaded');
+      // Create mesh from geometry
+      const leftMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        vertexColors: true, // Use colors from PLY file if available
+        side: THREE.DoubleSide
+      });
+      leftPlyMesh = new THREE.Mesh(leftGeometry, leftMaterial);
+      leftPlyMesh.visible = false;
       
-      leftWing = leftSplat;
-      rightWing = rightSplat;
+      // Center and scale the geometry
+      leftGeometry.center();
+      leftGeometry.computeBoundingBox();
       
-      debugLogger.updateAssetStatus('Gaussian Splats loaded');
-      debugLogger.log('success', 'Gaussian Splat wings ready');
+      scene.add(leftPlyMesh);
+      debugLogger.log('success', 'Left wing PLY loaded');
+      
+      // Load right wing
+      const rightGeometry = await new Promise((resolve, reject) => {
+        loader.load(
+          PLY_PATH_RIGHT,
+          (geometry) => resolve(geometry),
+          (progress) => {
+            const percent = (progress.loaded / progress.total * 100).toFixed(0);
+            debugLogger.log('info', `Loading right wing: ${percent}%`);
+          },
+          (error) => reject(error)
+        );
+      });
+      
+      const rightMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        side: THREE.DoubleSide
+      });
+      rightPlyMesh = new THREE.Mesh(rightGeometry, rightMaterial);
+      rightPlyMesh.visible = false;
+      
+      rightGeometry.center();
+      rightGeometry.computeBoundingBox();
+      
+      scene.add(rightPlyMesh);
+      debugLogger.log('success', 'Right wing PLY loaded');
+      
+      leftWing = leftPlyMesh;
+      rightWing = rightPlyMesh;
+      
+      debugLogger.updateAssetStatus('PLY models loaded');
+      debugLogger.log('success', 'PLY wing models ready');
       
     } catch (err) {
-      debugLogger.log('error', `Failed to load Gaussian Splats: ${err.message}`);
+      debugLogger.log('error', `Failed to load PLY models: ${err.message}`);
       debugLogger.log('info', 'Falling back to box placeholders');
       createBoxWings();
     }
   } else {
+    // Create box placeholders
     createBoxWings();
   }
 
@@ -333,13 +382,11 @@ async function renderLoop() {
         if (leftShoulder && rightShoulder &&
             leftShoulder.score > 0.3 && rightShoulder.score > 0.3) {
 
-          // Calculate current shoulder distance
           const shoulderDist = Math.hypot(
             rightShoulder.x - leftShoulder.x,
             rightShoulder.y - leftShoulder.y
           );
 
-          // Initialize base shoulder distance on first detection
           if (baseShoulderDistance === null) {
             baseShoulderDistance = shoulderDist;
             debugLogger.log('info', `Base shoulder distance set: ${baseShoulderDistance.toFixed(2)}px`);
@@ -348,7 +395,6 @@ async function renderLoop() {
           const depth = -2.0 - (150 / shoulderDist);
           const scale = Math.max(0.5, shoulderDist / 150);
 
-          // Calculate spine/torso center
           let spineCenter = {
             x: (leftShoulder.x + rightShoulder.x) / 2,
             y: (leftShoulder.y + rightShoulder.y) / 2
@@ -360,7 +406,6 @@ async function renderLoop() {
             spineCenter.y = (spineCenter.y + hipCenterY) / 2;
           }
 
-          // Calculate shoulder orientation for body rotation
           const shoulderAngle = Math.atan2(
             rightShoulder.y - leftShoulder.y,
             rightShoulder.x - leftShoulder.x
@@ -386,13 +431,13 @@ async function renderLoop() {
           leftWing.visible = false;
           rightWing.visible = false;
           debugLogger.updatePoseStatus('Low confidence');
-          baseShoulderDistance = null; // Reset when lost
+          baseShoulderDistance = null;
         }
       } else {
         leftWing.visible = false;
         rightWing.visible = false;
         debugLogger.updatePoseStatus('No person detected');
-        baseShoulderDistance = null; // Reset when lost
+        baseShoulderDistance = null;
       }
     } catch (err) {
       debugLogger.log('error', `Pose detection: ${err.message}`);
@@ -403,9 +448,8 @@ async function renderLoop() {
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION WING GLUED TO BACK (maintains constant spacing) ===
+// === POSITION WING GLUED TO BACK ===
 function positionWingGluedToBack(wing, thisShoulder, otherShoulder, spineCenter, depth, scale, shoulderAngle, currentShoulderDist, side) {
-  // Convert to normalized coordinates
   let shoulderX = (thisShoulder.x / video.videoWidth) * 2 - 1;
   let shoulderY = -(thisShoulder.y / video.videoHeight) * 2 + 1;
   
@@ -417,46 +461,43 @@ function positionWingGluedToBack(wing, thisShoulder, otherShoulder, spineCenter,
     spineCenterX = -spineCenterX;
   }
 
-  // Calculate the vector from spine to shoulder
   const shoulderToSpineDx = shoulderX - spineCenterX;
   const shoulderToSpineDy = shoulderY - spineCenterY;
   const distFromSpine = Math.sqrt(shoulderToSpineDx * shoulderToSpineDx + shoulderToSpineDy * shoulderToSpineDy);
   
-  // Normalize the vector
   const normalizedDx = shoulderToSpineDx / distFromSpine;
   const normalizedDy = shoulderToSpineDy / distFromSpine;
 
-  // FIXED OFFSET: Position wing at shoulder blade (constant distance from spine)
-  // This keeps wings at same relative position regardless of body rotation
-  const wingDistanceFromSpine = distFromSpine * 0.7; // 70% from spine to shoulder
-  const downwardShift = 0.15 * scale; // Move down to shoulder blade area
+  const wingDistanceFromSpine = distFromSpine * 0.7;
+  const downwardShift = 0.15 * scale;
 
   const targetX = spineCenterX + (normalizedDx * wingDistanceFromSpine);
   const targetY = spineCenterY + (normalizedDy * wingDistanceFromSpine) - downwardShift;
   const targetZ = depth - (0.4 * scale);
 
-  // Apply smoothing
   const smoothedPos = side === 'left' ? smoothedLeftPos : smoothedRightPos;
   smoothedPos.x = smoothedPos.x + (targetX - smoothedPos.x) * SMOOTHING_FACTOR;
   smoothedPos.y = smoothedPos.y + (targetY - smoothedPos.y) * SMOOTHING_FACTOR;
   smoothedPos.z = smoothedPos.z + (targetZ - smoothedPos.z) * SMOOTHING_FACTOR;
 
   wing.position.set(smoothedPos.x, smoothedPos.y, smoothedPos.z);
-  wing.scale.set(scale * 0.8, scale * 1.2, scale * 0.6);
+  
+  // Scale differently for PLY models vs boxes
+  if (USE_PLY_MODEL) {
+    wing.scale.set(scale * 0.1, scale * 0.1, scale * 0.1); // PLY models might need different scaling
+  } else {
+    wing.scale.set(scale * 0.8, scale * 1.2, scale * 0.6);
+  }
 
-  // Rotation follows the body orientation (shoulder angle)
-  // This makes wings rotate WITH the back naturally
   const baseRotY = side === 'left' ? 0.5 : -0.5;
   const baseRotX = -0.2;
   const baseRotZ = side === 'left' ? -0.1 : 0.1;
 
-  // Apply body rotation so wings follow back movement
   const bodyRotationInfluence = CAMERA_MODE === 'user' ? -shoulderAngle : shoulderAngle;
-  const targetRotY = baseRotY + (bodyRotationInfluence * 0.5); // Reduced influence for stability
+  const targetRotY = baseRotY + (bodyRotationInfluence * 0.5);
   const targetRotX = baseRotX;
-  const targetRotZ = baseRotZ + (bodyRotationInfluence * 0.2); // Subtle roll
+  const targetRotZ = baseRotZ + (bodyRotationInfluence * 0.2);
 
-  // Apply smoothing to rotation
   const smoothedRot = side === 'left' ? smoothedLeftRot : smoothedRightRot;
   smoothedRot.x = smoothedRot.x + (targetRotX - smoothedRot.x) * SMOOTHING_FACTOR;
   smoothedRot.y = smoothedRot.y + (targetRotY - smoothedRot.y) * SMOOTHING_FACTOR;
