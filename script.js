@@ -21,7 +21,7 @@ const USE_PLY_MODEL = true; // Set to true when you have .ply file
 const PLY_PATH_WINGS = 'assets/wings.ply'; // Path to your combined wings PLY file
 
 // Camera configuration
-const CAMERA_MODE = 'environment';
+const CAMERA_MODE = 'user';
 
 // === DEBUG LOGGER CLASS ===
 class DebugLogger {
