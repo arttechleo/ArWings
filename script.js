@@ -12,10 +12,17 @@ let smoothedLeftPos = { x: 0, y: 0, z: 0 };
 let smoothedRightPos = { x: 0, y: 0, z: 0 };
 let smoothedLeftRot = { x: 0, y: 0, z: 0 };
 let smoothedRightRot = { x: 0, y: 0, z: 0 };
-const SMOOTHING_FACTOR = 0.3; // Lower = smoother but slower, Higher = faster but jittery
+const SMOOTHING_FACTOR = 0.3;
 
-// Camera configuration - change 'user' to 'environment' for rear camera
-const CAMERA_MODE = 'environment'; // 'user' = front camera, 'environment' = rear camera
+// Gaussian Splatting support
+let leftSplat = null;
+let rightSplat = null;
+const USE_GAUSSIAN_SPLAT = false; // Set to true when you have .splat files
+const SPLAT_PATH_LEFT = 'assets/left_wing.splat'; // Path to your left wing splat file
+const SPLAT_PATH_RIGHT = 'assets/right_wing.splat'; // Path to your right wing splat file
+
+// Camera configuration
+const CAMERA_MODE = 'environment';
 
 // === DEBUG LOGGER CLASS ===
 class DebugLogger {
@@ -25,6 +32,7 @@ class DebugLogger {
     this.videoStatus = document.getElementById('video-status');
     this.modelStatus = document.getElementById('model-status');
     this.poseStatus = document.getElementById('pose-status');
+    this.assetStatus = document.getElementById('asset-status');
     this.fpsCounter = document.getElementById('fps-counter');
     this.maxLogs = 30;
     
@@ -58,7 +66,6 @@ class DebugLogger {
       this.logsContainer.removeChild(this.logsContainer.lastChild);
     }
 
-    // Also log to console
     console[type === 'error' ? 'error' : 'log'](`[${type}] ${message}`);
   }
 
@@ -78,6 +85,10 @@ class DebugLogger {
     this.poseStatus.textContent = status;
   }
 
+  updateAssetStatus(status) {
+    this.assetStatus.textContent = status;
+  }
+
   updateFPS(fps) {
     this.fpsCounter.textContent = fps.toFixed(1);
   }
@@ -89,7 +100,6 @@ function init() {
   debugLogger.log('info', '=== AR Back Wings Starting ===');
   debugLogger.log('info', `Camera Mode: ${CAMERA_MODE === 'user' ? 'Front (Selfie)' : 'Rear'}`);
   
-  // Check if THREE is loaded
   if (typeof THREE === 'undefined') {
     debugLogger.log('error', 'Three.js not loaded!');
     alert('Three.js failed to load. Please refresh the page.');
@@ -97,7 +107,6 @@ function init() {
   }
   debugLogger.log('success', 'Three.js loaded');
 
-  // Check if TensorFlow is loaded
   if (typeof tf === 'undefined') {
     debugLogger.log('error', 'TensorFlow.js not loaded!');
     alert('TensorFlow.js failed to load. Please refresh the page.');
@@ -105,7 +114,6 @@ function init() {
   }
   debugLogger.log('success', 'TensorFlow.js loaded');
 
-  // Check if poseDetection is loaded
   if (typeof poseDetection === 'undefined') {
     debugLogger.log('error', 'Pose Detection not loaded!');
     alert('Pose Detection failed to load. Please refresh the page.');
@@ -113,7 +121,13 @@ function init() {
   }
   debugLogger.log('success', 'Pose Detection loaded');
 
-  // Setup start button
+  // Check Gaussian Splatting support
+  if (typeof GaussianSplats3D !== 'undefined') {
+    debugLogger.log('success', 'Gaussian Splatting library loaded');
+  } else {
+    debugLogger.log('warning', 'Gaussian Splatting library not available');
+  }
+
   const startBtn = document.getElementById('start-btn');
   const instructions = document.getElementById('instructions');
 
@@ -135,18 +149,15 @@ async function startAR() {
     debugLogger.updateStatus('Initializing...');
     debugLogger.log('info', 'Starting AR experience');
 
-    // Check browser support
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error('Camera not supported in this browser');
     }
     debugLogger.log('success', 'Browser supports camera API');
 
-    // Setup canvas
     canvas = document.getElementById('output-canvas');
     ctx = canvas.getContext('2d');
     debugLogger.log('success', 'Canvas context created');
 
-    // Setup video
     video = document.getElementById('video');
     debugLogger.updateStatus('Requesting camera...');
     debugLogger.log('info', `Requesting ${CAMERA_MODE === 'user' ? 'front-facing' : 'rear-facing'} camera`);
@@ -165,7 +176,6 @@ async function startAR() {
       debugLogger.log('success', 'Camera access granted');
       debugLogger.updateVideoStatus('Stream acquired');
 
-      // Wait for video metadata
       await new Promise((resolve) => {
         video.onloadedmetadata = () => {
           video.play();
@@ -173,7 +183,6 @@ async function startAR() {
         };
       });
 
-      // Set canvas size to match video
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       debugLogger.log('success', `Video ready: ${video.videoWidth}x${video.videoHeight}`);
@@ -184,12 +193,10 @@ async function startAR() {
       throw new Error(`Camera access denied: ${err.message}`);
     }
 
-    // Setup Three.js
     debugLogger.updateStatus('Setting up 3D renderer...');
-    setupThreeJS();
+    await setupThreeJS();
     debugLogger.log('success', '3D renderer ready');
 
-    // Load pose detection model
     debugLogger.updateStatus('Loading AI model...');
     debugLogger.updateModelStatus('Loading...');
     debugLogger.log('info', 'Loading MoveNet model...');
@@ -203,9 +210,8 @@ async function startAR() {
 
     debugLogger.log('success', 'AI model loaded!');
     debugLogger.updateModelStatus('Ready');
-    debugLogger.updateStatus('Running - Show your back!');
+    debugLogger.updateStatus('Running - Show back!');
 
-    // Start rendering
     isRunning = true;
     renderLoop();
 
@@ -216,16 +222,13 @@ async function startAR() {
   }
 }
 
-// === SETUP THREE.JS ===
-function setupThreeJS() {
-  // Create renderer
-  renderer = new THREE.WebGLRenderer({ alpha: true });
+// === SETUP THREE.JS (with Gaussian Splatting support) ===
+async function setupThreeJS() {
+  renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
   renderer.setSize(canvas.width, canvas.height);
 
-  // Create scene
   scene = new THREE.Scene();
 
-  // Create camera
   camera = new THREE.PerspectiveCamera(
     75,
     canvas.width / canvas.height,
@@ -234,7 +237,46 @@ function setupThreeJS() {
   );
   camera.position.set(0, 0, 0);
 
-  // Create wing cubes with better proportions for wings
+  // Load assets based on configuration
+  if (USE_GAUSSIAN_SPLAT && typeof GaussianSplats3D !== 'undefined') {
+    debugLogger.log('info', 'Loading Gaussian Splat assets...');
+    debugLogger.updateAssetStatus('Loading Gaussian Splats...');
+    
+    try {
+      // Load Gaussian Splatting models
+      const loader = new GaussianSplats3D.Loader();
+      
+      leftSplat = await loader.loadAsync(SPLAT_PATH_LEFT);
+      leftSplat.visible = false;
+      scene.add(leftSplat);
+      debugLogger.log('success', 'Left wing splat loaded');
+      
+      rightSplat = await loader.loadAsync(SPLAT_PATH_RIGHT);
+      rightSplat.visible = false;
+      scene.add(rightSplat);
+      debugLogger.log('success', 'Right wing splat loaded');
+      
+      leftWing = leftSplat;
+      rightWing = rightSplat;
+      
+      debugLogger.updateAssetStatus('Gaussian Splats loaded');
+      debugLogger.log('success', 'Gaussian Splat wings ready');
+      
+    } catch (err) {
+      debugLogger.log('error', `Failed to load Gaussian Splats: ${err.message}`);
+      debugLogger.log('info', 'Falling back to box placeholders');
+      createBoxWings();
+    }
+  } else {
+    // Create box placeholders
+    createBoxWings();
+  }
+
+  debugLogger.log('success', 'Wing assets created');
+}
+
+// === CREATE BOX WING PLACEHOLDERS ===
+function createBoxWings() {
   const wingGeometry = new THREE.BoxGeometry(0.15, 0.35, 0.08);
   const wingMaterial = new THREE.MeshBasicMaterial({
     color: 0x00ff88,
@@ -252,16 +294,16 @@ function setupThreeJS() {
   leftWing.visible = false;
   rightWing.visible = false;
 
-  debugLogger.log('success', 'Wing cubes created');
+  debugLogger.updateAssetStatus('Box placeholders');
+  debugLogger.log('success', 'Wing boxes created');
 }
 
-// === MAIN RENDER LOOP (Enhanced with body orientation tracking) ===
+// === MAIN RENDER LOOP ===
 async function renderLoop() {
   if (!isRunning) return;
 
   requestAnimationFrame(renderLoop);
 
-  // Calculate FPS
   frameCount++;
   const now = Date.now();
   if (now - lastFpsUpdate >= 1000) {
@@ -271,15 +313,13 @@ async function renderLoop() {
     lastFpsUpdate = now;
   }
 
-  // Draw video frame to canvas
   ctx.save();
   if (CAMERA_MODE === 'user') {
-    ctx.scale(-1, 1); // Mirror the video for front camera
+    ctx.scale(-1, 1);
   }
   ctx.drawImage(video, CAMERA_MODE === 'user' ? -canvas.width : 0, 0, canvas.width, canvas.height);
   ctx.restore();
 
-  // Run pose detection
   if (video.readyState === video.HAVE_ENOUGH_DATA) {
     try {
       const poses = await poseModel.estimatePoses(video);
@@ -294,7 +334,6 @@ async function renderLoop() {
         if (leftShoulder && rightShoulder &&
             leftShoulder.score > 0.3 && rightShoulder.score > 0.3) {
 
-          // Calculate shoulder distance for scale
           const shoulderDist = Math.hypot(
             rightShoulder.x - leftShoulder.x,
             rightShoulder.y - leftShoulder.y
@@ -303,34 +342,24 @@ async function renderLoop() {
           const depth = -2.0 - (150 / shoulderDist);
           const scale = Math.max(0.5, shoulderDist / 150);
 
-          // Calculate body orientation angle
-          const shoulderAngle = Math.atan2(
-            rightShoulder.y - leftShoulder.y,
-            rightShoulder.x - leftShoulder.x
-          );
-
-          // Calculate spine center for better back positioning
+          // FIXED: Don't use body angle for rotation - keep wings locked to back
           let spineCenter = {
             x: (leftShoulder.x + rightShoulder.x) / 2,
             y: (leftShoulder.y + rightShoulder.y) / 2
           };
 
-          // If hips are visible, use torso center
           if (leftHip && rightHip && leftHip.score > 0.2 && rightHip.score > 0.2) {
             const hipCenterX = (leftHip.x + rightHip.x) / 2;
             const hipCenterY = (leftHip.y + rightHip.y) / 2;
-            spineCenter.y = (spineCenter.y + hipCenterY) / 2; // Mid-torso
+            spineCenter.y = (spineCenter.y + hipCenterY) / 2;
           }
 
-          // Position wings on back shoulder blades with body orientation
           if (CAMERA_MODE === 'user') {
-            // Mirrored for front camera
-            positionWingOnBack(leftWing, rightShoulder, spineCenter, depth, scale, shoulderAngle, 'left');
-            positionWingOnBack(rightWing, leftShoulder, spineCenter, depth, scale, shoulderAngle, 'right');
+            positionWingOnBack(leftWing, rightShoulder, spineCenter, depth, scale, 'left');
+            positionWingOnBack(rightWing, leftShoulder, spineCenter, depth, scale, 'right');
           } else {
-            // Normal for rear camera
-            positionWingOnBack(leftWing, leftShoulder, spineCenter, depth, scale, shoulderAngle, 'left');
-            positionWingOnBack(rightWing, rightShoulder, spineCenter, depth, scale, shoulderAngle, 'right');
+            positionWingOnBack(leftWing, leftShoulder, spineCenter, depth, scale, 'left');
+            positionWingOnBack(rightWing, rightShoulder, spineCenter, depth, scale, 'right');
           }
 
           leftWing.visible = true;
@@ -338,7 +367,6 @@ async function renderLoop() {
 
           debugLogger.updatePoseStatus(`Detected (${leftShoulder.score.toFixed(2)})`);
 
-          // Draw debug points on canvas
           const debugPoints = [leftShoulder, rightShoulder];
           if (leftHip && rightHip) debugPoints.push(leftHip, rightHip);
           drawDebugPoints(ctx, debugPoints);
@@ -357,38 +385,27 @@ async function renderLoop() {
     }
   }
 
-  // Render Three.js scene on top of video
   renderer.render(scene, camera);
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === SMOOTH VALUE INTERPOLATION ===
-function smoothValue(current, target, factor) {
-  return current + (target - factor) * factor;
-}
-
-// === POSITION WING ON BACK SHOULDER BLADES (with orientation tracking) ===
-function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, bodyAngle, side) {
-  // Convert shoulder to normalized coordinates
+// === POSITION WING ON BACK (FIXED - no spreading on rotation) ===
+function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, side) {
   let shoulderX = (shoulder.x / video.videoWidth) * 2 - 1;
   let shoulderY = -(shoulder.y / video.videoHeight) * 2 + 1;
 
-  // Convert spine center to normalized coordinates
   let spineCenterX = (spineCenter.x / video.videoWidth) * 2 - 1;
   let spineCenterY = -(spineCenter.y / video.videoHeight) * 2 + 1;
 
-  // Mirror coordinates for front camera
   if (CAMERA_MODE === 'user') {
     shoulderX = -shoulderX;
     spineCenterX = -spineCenterX;
   }
 
-  // Calculate vector from spine to shoulder
   const dx = shoulderX - spineCenterX;
   const dy = shoulderY - spineCenterY;
 
-  // Position wing on shoulder blade:
-  // Move inward toward spine and down toward mid-back
+  // FIXED: Constant offsets to prevent spreading
   const inwardOffset = 0.3;
   const downwardOffset = 0.2;
 
@@ -396,7 +413,6 @@ function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, bodyAngle
   const targetY = shoulderY - (Math.abs(dy) * downwardOffset) - (0.1 * scale);
   const targetZ = depth - (0.4 * scale);
 
-  // Apply smoothing to position
   const smoothedPos = side === 'left' ? smoothedLeftPos : smoothedRightPos;
   smoothedPos.x = smoothedPos.x + (targetX - smoothedPos.x) * SMOOTHING_FACTOR;
   smoothedPos.y = smoothedPos.y + (targetY - smoothedPos.y) * SMOOTHING_FACTOR;
@@ -405,23 +421,15 @@ function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, bodyAngle
   wing.position.set(smoothedPos.x, smoothedPos.y, smoothedPos.z);
   wing.scale.set(scale * 0.8, scale * 1.2, scale * 0.6);
 
-  // Calculate rotation based on body orientation
-  // Wings should rotate with the body
-  let baseRotY = side === 'left' ? 0.6 : -0.6;
+  // FIXED: Static rotation - wings don't rotate with body
+  const baseRotY = side === 'left' ? 0.6 : -0.6;
   const baseRotX = -0.3;
   const baseRotZ = side === 'left' ? -0.15 : 0.15;
 
-  // Adjust rotation based on body angle (torso twist)
-  const bodyRotation = CAMERA_MODE === 'user' ? -bodyAngle : bodyAngle;
-  const targetRotY = baseRotY + bodyRotation;
-  const targetRotX = baseRotX;
-  const targetRotZ = baseRotZ + (bodyRotation * 0.3); // Add some roll based on twist
-
-  // Apply smoothing to rotation
   const smoothedRot = side === 'left' ? smoothedLeftRot : smoothedRightRot;
-  smoothedRot.x = smoothedRot.x + (targetRotX - smoothedRot.x) * SMOOTHING_FACTOR;
-  smoothedRot.y = smoothedRot.y + (targetRotY - smoothedRot.y) * SMOOTHING_FACTOR;
-  smoothedRot.z = smoothedRot.z + (targetRotZ - smoothedRot.z) * SMOOTHING_FACTOR;
+  smoothedRot.x = smoothedRot.x + (baseRotX - smoothedRot.x) * SMOOTHING_FACTOR;
+  smoothedRot.y = smoothedRot.y + (baseRotY - smoothedRot.y) * SMOOTHING_FACTOR;
+  smoothedRot.z = smoothedRot.z + (baseRotZ - smoothedRot.z) * SMOOTHING_FACTOR;
   
   wing.rotation.set(smoothedRot.x, smoothedRot.y, smoothedRot.z);
 }
@@ -434,7 +442,6 @@ function drawDebugPoints(ctx, keypoints) {
       let x = kp.x;
       const y = kp.y;
       
-      // Mirror x coordinate for front camera
       if (CAMERA_MODE === 'user') {
         x = canvas.width - x;
       }
@@ -449,4 +456,3 @@ function drawDebugPoints(ctx, keypoints) {
 // === START WHEN PAGE LOADS ===
 window.addEventListener('DOMContentLoaded', () => {
   init();
-});
