@@ -1,3 +1,5 @@
+import * as GaussianSplats3D from 'https://unpkg.com/@mkkellogg/gaussian-splats-3d@0.5.0/build/gaussian-splats-3d.module.js';
+
 let scene, camera, renderer;
 let leftWing, rightWing;
 let video, canvas, ctx;
@@ -16,13 +18,16 @@ let smoothedWingsPos = { x: 0, y: 0, z: 0 };
 let smoothedWingsRot = { x: 0, y: 0, z: 0 };
 const SMOOTHING_FACTOR = 0.4;
 
-// Store initial shoulder distance to maintain wing spacing
+// Store initial shoulder distance
 let baseShoulderDistance = null;
 
-// PLY Model support - Single file with both wings
-let wingsPlyMesh = null;
-const USE_PLY_MODEL = true; // Set to true when you have .ply file
-const PLY_PATH_WINGS = 'assets/wings.ply'; // Path to your combined wings PLY file
+// Gaussian Splat mesh
+let wingsSplatMesh = null;
+let viewer = null;
+
+// Configuration
+const USE_GAUSSIAN_SPLAT = true;
+const SPLAT_PLY_PATH = 'assets/wings.ply'; // Your Gaussian Splat PLY file
 
 // Camera configuration
 const CAMERA_MODE = 'environment';
@@ -102,6 +107,7 @@ function init() {
   debugLogger = new DebugLogger();
   debugLogger.log('info', '=== AR Back Wings Starting ===');
   debugLogger.log('info', `Camera Mode: ${CAMERA_MODE === 'user' ? 'Front (Selfie)' : 'Rear'}`);
+  debugLogger.log('info', 'Using Gaussian Splatting renderer');
   
   if (typeof THREE === 'undefined') {
     debugLogger.log('error', 'Three.js not loaded!');
@@ -124,12 +130,12 @@ function init() {
   }
   debugLogger.log('success', 'Pose Detection loaded');
 
-  // Check PLYLoader availability
-  if (typeof THREE.PLYLoader !== 'undefined') {
-    debugLogger.log('success', 'PLYLoader available');
-  } else {
-    debugLogger.log('warning', 'PLYLoader not available');
+  if (typeof GaussianSplats3D === 'undefined') {
+    debugLogger.log('error', 'Gaussian Splats 3D not loaded!');
+    alert('Gaussian Splatting library failed to load. Please refresh the page.');
+    return;
   }
+  debugLogger.log('success', 'Gaussian Splats 3D loaded');
 
   const startBtn = document.getElementById('start-btn');
   const instructions = document.getElementById('instructions');
@@ -225,9 +231,13 @@ async function startAR() {
   }
 }
 
-// === SETUP THREE.JS (with single PLY file for both wings) ===
+// === SETUP THREE.JS with Gaussian Splatting ===
 async function setupThreeJS() {
-  renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+  renderer = new THREE.WebGLRenderer({ 
+    alpha: true, 
+    antialias: false,
+    preserveDrawingBuffer: true 
+  });
   renderer.setSize(canvas.width, canvas.height);
 
   scene = new THREE.Scene();
@@ -240,79 +250,59 @@ async function setupThreeJS() {
   );
   camera.position.set(0, 0, 0);
 
-  // Load assets based on configuration
-  if (USE_PLY_MODEL && typeof THREE.PLYLoader !== 'undefined') {
-    debugLogger.log('info', 'Loading PLY model (both wings)...');
-    debugLogger.updateAssetStatus('Loading PLY model...');
+  if (USE_GAUSSIAN_SPLAT) {
+    debugLogger.log('info', 'Loading Gaussian Splat PLY file...');
+    debugLogger.updateAssetStatus('Loading Gaussian Splat...');
     
     try {
-      const loader = new THREE.PLYLoader();
-      
-      // Load combined wings PLY file
-      const wingsGeometry = await new Promise((resolve, reject) => {
-        loader.load(
-          PLY_PATH_WINGS,
-          (geometry) => {
-            debugLogger.log('success', 'PLY file loaded successfully');
-            resolve(geometry);
-          },
-          (progress) => {
-            if (progress.total > 0) {
-              const percent = (progress.loaded / progress.total * 100).toFixed(0);
-              debugLogger.log('info', `Loading wings: ${percent}%`);
-            }
-          },
-          (error) => {
-            debugLogger.log('error', `PLY loader error: ${error}`);
-            reject(new Error(`PLY load failed: ${error}`));
-          }
-        );
+      // Create Gaussian Splat Viewer
+      viewer = new GaussianSplats3D.Viewer({
+        scene: scene,
+        renderer: renderer,
+        camera: camera,
+        useBuiltInControls: false,
+        gpuAcceleratedSort: true,
+        integerBasedSort: true,
+        halfPrecisionCovariancesOnGPU: true,
+        dynamicScene: true,
+        webXRMode: GaussianSplats3D.WebXRMode.None,
+        renderMode: GaussianSplats3D.RenderMode.Always,
+        sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant
       });
-      
-      debugLogger.log('success', 'Wings PLY geometry loaded');
-      
-      // Create mesh from geometry
-      const wingsMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        vertexColors: true, // Use colors from PLY file if available
-        side: THREE.DoubleSide,
-        transparent: false,
-        opacity: 1.0
+
+      debugLogger.log('info', 'Viewer created, loading PLY...');
+
+      // Load the Gaussian Splat PLY file
+      await viewer.addSplatScene(SPLAT_PLY_PATH, {
+        splatAlphaRemovalThreshold: 5,
+        showLoadingUI: false,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1]
       });
-      
-      wingsPlyMesh = new THREE.Mesh(wingsGeometry, wingsMaterial);
-      wingsPlyMesh.visible = false;
-      
-      // Center and compute bounding box
-      wingsGeometry.center();
-      wingsGeometry.computeBoundingBox();
-      wingsGeometry.computeVertexNormals(); // Better lighting
-      
-      const bbox = wingsGeometry.boundingBox;
-      debugLogger.log('info', `Model bounds: X[${bbox.min.x.toFixed(2)}, ${bbox.max.x.toFixed(2)}] Y[${bbox.min.y.toFixed(2)}, ${bbox.max.y.toFixed(2)}] Z[${bbox.min.z.toFixed(2)}, ${bbox.max.z.toFixed(2)}]`);
-      
-      scene.add(wingsPlyMesh);
-      debugLogger.log('success', 'Wings PLY mesh added to scene');
-      
-      // Use the single mesh as both wings (they're already combined)
-      leftWing = wingsPlyMesh;
-      rightWing = wingsPlyMesh; // Same reference for compatibility
-      
-      debugLogger.updateAssetStatus('PLY model loaded');
-      debugLogger.log('success', 'PLY wing model ready');
-      
+
+      debugLogger.log('success', 'Gaussian Splat PLY loaded!');
+      debugLogger.updateAssetStatus('Gaussian Splat loaded');
+
+      // Get the splat mesh
+      wingsSplatMesh = viewer.splatMesh;
+      wingsSplatMesh.visible = false;
+
+      leftWing = wingsSplatMesh;
+      rightWing = wingsSplatMesh;
+
+      debugLogger.log('success', 'Gaussian Splat mesh ready');
+
     } catch (err) {
-      debugLogger.log('error', `Failed to load PLY model: ${err.message}`);
+      debugLogger.log('error', `Gaussian Splat load failed: ${err.message}`);
       debugLogger.log('info', 'Falling back to box placeholders');
-      wingsPlyMesh = null; // Ensure it's explicitly null
       createBoxWings();
     }
   } else {
-    debugLogger.log('info', 'Using box placeholders (PLY disabled or unavailable)');
     createBoxWings();
   }
 
-  debugLogger.log('success', 'Wing assets created');
+  debugLogger.log('success', 'Wing assets ready');
 }
 
 // === CREATE BOX WING PLACEHOLDERS ===
@@ -403,12 +393,10 @@ async function renderLoop() {
             rightShoulder.x - leftShoulder.x
           );
 
-          // SAFETY CHECK: Position based on which wings are loaded
-          if (USE_PLY_MODEL && wingsPlyMesh) {
-            positionCombinedWingsOnBack(wingsPlyMesh, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle);
-            wingsPlyMesh.visible = true;
-          } else if (leftWing && rightWing) {
-            // Position separate box wings
+          if (USE_GAUSSIAN_SPLAT && wingsSplatMesh) {
+            positionGaussianSplatOnBack(wingsSplatMesh, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle);
+            wingsSplatMesh.visible = true;
+          } else if (leftWing && rightWing && leftWing !== wingsSplatMesh) {
             if (CAMERA_MODE === 'user') {
               positionWingGluedToBack(leftWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
               positionWingGluedToBack(rightWing, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'right');
@@ -426,16 +414,16 @@ async function renderLoop() {
           if (leftHip && rightHip) debugPoints.push(leftHip, rightHip);
           drawDebugPoints(ctx, debugPoints);
         } else {
-          if (wingsPlyMesh) wingsPlyMesh.visible = false;
-          if (leftWing) leftWing.visible = false;
-          if (rightWing) rightWing.visible = false;
+          if (wingsSplatMesh) wingsSplatMesh.visible = false;
+          if (leftWing && leftWing !== wingsSplatMesh) leftWing.visible = false;
+          if (rightWing && rightWing !== wingsSplatMesh) rightWing.visible = false;
           debugLogger.updatePoseStatus('Low confidence');
           baseShoulderDistance = null;
         }
       } else {
-        if (wingsPlyMesh) wingsPlyMesh.visible = false;
-        if (leftWing) leftWing.visible = false;
-        if (rightWing) rightWing.visible = false;
+        if (wingsSplatMesh) wingsSplatMesh.visible = false;
+        if (leftWing && leftWing !== wingsSplatMesh) leftWing.visible = false;
+        if (rightWing && rightWing !== wingsSplatMesh) rightWing.visible = false;
         debugLogger.updatePoseStatus('No person detected');
         baseShoulderDistance = null;
       }
@@ -444,19 +432,24 @@ async function renderLoop() {
     }
   }
 
-  renderer.render(scene, camera);
+  // Update Gaussian Splat viewer if it exists
+  if (viewer && USE_GAUSSIAN_SPLAT) {
+    viewer.update();
+    viewer.render();
+  } else {
+    renderer.render(scene, camera);
+  }
+  
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION COMBINED WINGS ON BACK (single mesh with both wings) ===
-function positionCombinedWingsOnBack(wings, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle) {
-  // Safety check
-  if (!wings) {
-    debugLogger.log('error', 'Wings mesh is null in positionCombinedWingsOnBack');
+// === POSITION GAUSSIAN SPLAT ON BACK ===
+function positionGaussianSplatOnBack(splat, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle) {
+  if (!splat) {
+    debugLogger.log('error', 'Splat mesh is null');
     return;
   }
 
-  // Convert spine center to normalized coordinates
   let spineCenterX = (spineCenter.x / video.videoWidth) * 2 - 1;
   let spineCenterY = -(spineCenter.y / video.videoHeight) * 2 + 1;
 
@@ -464,45 +457,40 @@ function positionCombinedWingsOnBack(wings, leftShoulder, rightShoulder, spineCe
     spineCenterX = -spineCenterX;
   }
 
-  // Position wings centered on upper back/spine
-  const downwardShift = 0.1 * scale; // Adjust to position on shoulder blades
+  const downwardShift = 0.1 * scale;
   
   const targetX = spineCenterX;
   const targetY = spineCenterY - downwardShift;
-  const targetZ = depth - (0.3 * scale); // Behind the body
+  const targetZ = depth - (0.3 * scale);
 
-  // Apply smoothing
   smoothedWingsPos.x = smoothedWingsPos.x + (targetX - smoothedWingsPos.x) * SMOOTHING_FACTOR;
   smoothedWingsPos.y = smoothedWingsPos.y + (targetY - smoothedWingsPos.y) * SMOOTHING_FACTOR;
   smoothedWingsPos.z = smoothedWingsPos.z + (targetZ - smoothedWingsPos.z) * SMOOTHING_FACTOR;
 
-  wings.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
+  splat.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
   
-  // Scale the combined wings model
-  wings.scale.set(scale * 0.002, scale * 0.002, scale * 0.002); // Adjust multiplier based on your model size
+  // Scale for Gaussian Splat - adjust based on your model
+  splat.scale.set(scale * 0.5, scale * 0.5, scale * 0.5);
 
-  // Rotation to follow body orientation
-  const baseRotX = -0.2; // Slight forward tilt
-  const baseRotY = 0; // No base Y rotation for centered wings
+  const baseRotX = -0.2;
+  const baseRotY = 0;
   const baseRotZ = 0;
 
-  // Apply body rotation
   const bodyRotationInfluence = CAMERA_MODE === 'user' ? -shoulderAngle : shoulderAngle;
   const targetRotX = baseRotX;
   const targetRotY = baseRotY + (bodyRotationInfluence * 0.5);
   const targetRotZ = baseRotZ + (bodyRotationInfluence * 0.2);
 
-  // Apply smoothing to rotation
   smoothedWingsRot.x = smoothedWingsRot.x + (targetRotX - smoothedWingsRot.x) * SMOOTHING_FACTOR;
   smoothedWingsRot.y = smoothedWingsRot.y + (targetRotY - smoothedWingsRot.y) * SMOOTHING_FACTOR;
   smoothedWingsRot.z = smoothedWingsRot.z + (targetRotZ - smoothedWingsRot.z) * SMOOTHING_FACTOR;
   
-  wings.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
+  splat.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
 }
 
 // === POSITION WING GLUED TO BACK (for box placeholders) ===
 function positionWingGluedToBack(wing, thisShoulder, otherShoulder, spineCenter, depth, scale, shoulderAngle, currentShoulderDist, side) {
-  if (!wing) return; // Safety check
+  if (!wing) return;
   
   let shoulderX = (thisShoulder.x / video.videoWidth) * 2 - 1;
   let shoulderY = -(thisShoulder.y / video.videoHeight) * 2 + 1;
