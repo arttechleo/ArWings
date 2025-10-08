@@ -7,6 +7,13 @@ let isRunning = false;
 let frameCount = 0;
 let lastFpsUpdate = Date.now();
 
+// Smoothing variables for stable positioning
+let smoothedLeftPos = { x: 0, y: 0, z: 0 };
+let smoothedRightPos = { x: 0, y: 0, z: 0 };
+let smoothedLeftRot = { x: 0, y: 0, z: 0 };
+let smoothedRightRot = { x: 0, y: 0, z: 0 };
+const SMOOTHING_FACTOR = 0.3; // Lower = smoother but slower, Higher = faster but jittery
+
 // Camera configuration - change 'user' to 'environment' for rear camera
 const CAMERA_MODE = 'user'; // 'user' = front camera, 'environment' = rear camera
 
@@ -248,7 +255,7 @@ function setupThreeJS() {
   debugLogger.log('success', 'Wing cubes created');
 }
 
-// === MAIN RENDER LOOP (Enhanced with better back detection) ===
+// === MAIN RENDER LOOP (Enhanced with body orientation tracking) ===
 async function renderLoop() {
   if (!isRunning) return;
 
@@ -296,6 +303,12 @@ async function renderLoop() {
           const depth = -2.0 - (150 / shoulderDist);
           const scale = Math.max(0.5, shoulderDist / 150);
 
+          // Calculate body orientation angle
+          const shoulderAngle = Math.atan2(
+            rightShoulder.y - leftShoulder.y,
+            rightShoulder.x - leftShoulder.x
+          );
+
           // Calculate spine center for better back positioning
           let spineCenter = {
             x: (leftShoulder.x + rightShoulder.x) / 2,
@@ -309,15 +322,15 @@ async function renderLoop() {
             spineCenter.y = (spineCenter.y + hipCenterY) / 2; // Mid-torso
           }
 
-          // Position wings on back shoulder blades
+          // Position wings on back shoulder blades with body orientation
           if (CAMERA_MODE === 'user') {
             // Mirrored for front camera
-            positionWingOnBack(leftWing, rightShoulder, spineCenter, depth, scale, 'left');
-            positionWingOnBack(rightWing, leftShoulder, spineCenter, depth, scale, 'right');
+            positionWingOnBack(leftWing, rightShoulder, spineCenter, depth, scale, shoulderAngle, 'left');
+            positionWingOnBack(rightWing, leftShoulder, spineCenter, depth, scale, shoulderAngle, 'right');
           } else {
             // Normal for rear camera
-            positionWingOnBack(leftWing, leftShoulder, spineCenter, depth, scale, 'left');
-            positionWingOnBack(rightWing, rightShoulder, spineCenter, depth, scale, 'right');
+            positionWingOnBack(leftWing, leftShoulder, spineCenter, depth, scale, shoulderAngle, 'left');
+            positionWingOnBack(rightWing, rightShoulder, spineCenter, depth, scale, shoulderAngle, 'right');
           }
 
           leftWing.visible = true;
@@ -349,8 +362,13 @@ async function renderLoop() {
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION WING ON BACK SHOULDER BLADES ===
-function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, side) {
+// === SMOOTH VALUE INTERPOLATION ===
+function smoothValue(current, target, factor) {
+  return current + (target - factor) * factor;
+}
+
+// === POSITION WING ON BACK SHOULDER BLADES (with orientation tracking) ===
+function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, bodyAngle, side) {
   // Convert shoulder to normalized coordinates
   let shoulderX = (shoulder.x / video.videoWidth) * 2 - 1;
   let shoulderY = -(shoulder.y / video.videoHeight) * 2 + 1;
@@ -370,27 +388,42 @@ function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, side) {
   const dy = shoulderY - spineCenterY;
 
   // Position wing on shoulder blade:
-  // - Start at shoulder
-  // - Move inward toward spine (30%)
-  // - Move down toward mid-back
-  const inwardOffset = 0.3; // How much to move toward spine
-  const downwardOffset = 0.2; // How much to move down
+  // Move inward toward spine and down toward mid-back
+  const inwardOffset = 0.3;
+  const downwardOffset = 0.2;
 
-  const wingX = shoulderX - (dx * inwardOffset);
-  const wingY = shoulderY - (Math.abs(dy) * downwardOffset) - (0.1 * scale);
+  const targetX = shoulderX - (dx * inwardOffset);
+  const targetY = shoulderY - (Math.abs(dy) * downwardOffset) - (0.1 * scale);
+  const targetZ = depth - (0.4 * scale);
 
-  // Depth offset to place wings behind the body
-  const depthOffset = -0.4 * scale;
+  // Apply smoothing to position
+  const smoothedPos = side === 'left' ? smoothedLeftPos : smoothedRightPos;
+  smoothedPos.x = smoothedPos.x + (targetX - smoothedPos.x) * SMOOTHING_FACTOR;
+  smoothedPos.y = smoothedPos.y + (targetY - smoothedPos.y) * SMOOTHING_FACTOR;
+  smoothedPos.z = smoothedPos.z + (targetZ - smoothedPos.z) * SMOOTHING_FACTOR;
 
-  wing.position.set(wingX, wingY, depth + depthOffset);
-  wing.scale.set(scale * 0.8, scale * 1.2, scale * 0.6); // Make wings taller
+  wing.position.set(smoothedPos.x, smoothedPos.y, smoothedPos.z);
+  wing.scale.set(scale * 0.8, scale * 1.2, scale * 0.6);
 
-  // Rotate wings to angle backward and outward
-  const rotY = side === 'left' ? 0.6 : -0.6; // Angle outward from spine
-  const rotX = -0.3; // Tilt backward
-  const rotZ = side === 'left' ? -0.15 : 0.15; // Slight roll
+  // Calculate rotation based on body orientation
+  // Wings should rotate with the body
+  let baseRotY = side === 'left' ? 0.6 : -0.6;
+  const baseRotX = -0.3;
+  const baseRotZ = side === 'left' ? -0.15 : 0.15;
+
+  // Adjust rotation based on body angle (torso twist)
+  const bodyRotation = CAMERA_MODE === 'user' ? -bodyAngle : bodyAngle;
+  const targetRotY = baseRotY + bodyRotation;
+  const targetRotX = baseRotX;
+  const targetRotZ = baseRotZ + (bodyRotation * 0.3); // Add some roll based on twist
+
+  // Apply smoothing to rotation
+  const smoothedRot = side === 'left' ? smoothedLeftRot : smoothedRightRot;
+  smoothedRot.x = smoothedRot.x + (targetRotX - smoothedRot.x) * SMOOTHING_FACTOR;
+  smoothedRot.y = smoothedRot.y + (targetRotY - smoothedRot.y) * SMOOTHING_FACTOR;
+  smoothedRot.z = smoothedRot.z + (targetRotZ - smoothedRot.z) * SMOOTHING_FACTOR;
   
-  wing.rotation.set(rotX, rotY, rotZ);
+  wing.rotation.set(smoothedRot.x, smoothedRot.y, smoothedRot.z);
 }
 
 // === DRAW DEBUG POINTS ===
