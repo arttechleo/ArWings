@@ -1,4 +1,84 @@
-// No imports - using global THREE from CDN
+// Gaussian Splatting loader - inline implementation
+class GaussianSplatLoader {
+  constructor() {
+    this.splatData = null;
+  }
+
+  async load(url, onProgress) {
+    try {
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to load: ${response.status} ${response.statusText}`);
+      }
+
+      const buffer = await response.arrayBuffer();
+      
+      if (onProgress) {
+        onProgress({ loaded: buffer.byteLength, total: buffer.byteLength });
+      }
+
+      return this.parsePLY(buffer);
+    } catch (error) {
+      throw new Error(`Gaussian Splat load failed: ${error.message}`);
+    }
+  }
+
+  parsePLY(buffer) {
+    const ubuf = new Uint8Array(buffer);
+    const header = new TextDecoder().decode(ubuf.slice(0, 1024));
+    
+    let vertexCount = 0;
+    const match = header.match(/element vertex (\d+)/);
+    if (match) {
+      vertexCount = parseInt(match[1]);
+    }
+
+    if (vertexCount === 0) {
+      throw new Error('Invalid PLY: no vertices found');
+    }
+
+    // Find end of header
+    const headerEnd = header.indexOf('end_header\n') + 11;
+    
+    // Parse as simple point cloud for now
+    const dataView = new DataView(buffer, headerEnd);
+    const vertexSize = 24; // Assuming x, y, z as floats + colors
+    
+    const positions = new Float32Array(vertexCount * 3);
+    const colors = new Float32Array(vertexCount * 3);
+
+    for (let i = 0; i < vertexCount; i++) {
+      const offset = i * vertexSize;
+      
+      // Read position (x, y, z)
+      positions[i * 3] = dataView.getFloat32(offset, true);
+      positions[i * 3 + 1] = dataView.getFloat32(offset + 4, true);
+      positions[i * 3 + 2] = dataView.getFloat32(offset + 8, true);
+      
+      // Read color (r, g, b) if available
+      if (vertexSize >= 15) {
+        colors[i * 3] = dataView.getUint8(offset + 12) / 255;
+        colors[i * 3 + 1] = dataView.getUint8(offset + 13) / 255;
+        colors[i * 3 + 2] = dataView.getUint8(offset + 14) / 255;
+      } else {
+        colors[i * 3] = 1.0;
+        colors[i * 3 + 1] = 1.0;
+        colors[i * 3 + 2] = 1.0;
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.computeBoundingBox();
+    geometry.center();
+
+    return geometry;
+  }
+}
+
+// Main app variables
 let scene, camera, renderer;
 let leftWing, rightWing;
 let video, canvas, ctx;
@@ -8,7 +88,6 @@ let isRunning = false;
 let frameCount = 0;
 let lastFpsUpdate = Date.now();
 
-// Smoothing variables
 let smoothedWingsPos = { x: 0, y: 0, z: 0 };
 let smoothedWingsRot = { x: 0, y: 0, z: 0 };
 let smoothedLeftPos = { x: 0, y: 0, z: 0 };
@@ -19,30 +98,24 @@ const SMOOTHING_FACTOR = 0.4;
 
 let baseShoulderDistance = null;
 let wingsMesh = null;
-let plyLoaded = false;
-let plyBoundingBoxSize = null;
+let splatLoaded = false;
+let splatBoundingBoxSize = null;
 
-// Configuration - TRY DIFFERENT PATHS
-const USE_PLY_MODEL = true;
-const PLY_PATHS = [
-  './assets/wings.ply',
-  'assets/wings.ply',
-  '/assets/wings.ply',
-  '../assets/wings.ply'
-];
-const TEST_MODE = false;
+// Configuration
+const USE_GAUSSIAN_SPLAT = true;
+const SPLAT_PATH = 'assets/wings.ply';
+const TEST_MODE = false; // Set true to see splat without tracking
 const CAMERA_MODE = 'environment';
 
-// Debug helper
 window.debugWings = () => {
-  console.log('=== DEBUG INFO ===');
-  console.log('Current URL:', window.location.href);
-  console.log('PLY Loaded:', plyLoaded);
-  console.log('Wings Mesh:', wingsMesh);
+  console.log('=== DEBUG ===');
+  console.log('Splat loaded:', splatLoaded);
+  console.log('Wings mesh:', wingsMesh);
   if (wingsMesh) {
     console.log('  Visible:', wingsMesh.visible);
     console.log('  Position:', wingsMesh.position);
     console.log('  Scale:', wingsMesh.scale);
+    console.log('  Vertices:', wingsMesh.geometry.attributes.position.count);
   }
 };
 
@@ -101,39 +174,27 @@ class DebugLogger {
 
 // === INITIALIZE ===
 function init() {
-  console.log('=== INIT CALLED ===');
-  console.log('Current location:', window.location.href);
+  console.log('=== INIT ===');
   
   debugLogger = new DebugLogger();
-  debugLogger.log('info', '🚀 AR Back Wings Starting...');
-  debugLogger.log('info', `Current URL: ${window.location.pathname}`);
-  debugLogger.log('info', `Test Mode: ${TEST_MODE ? 'ENABLED' : 'DISABLED'}`);
+  debugLogger.log('info', '🚀 AR Gaussian Splat Wings');
+  debugLogger.log('info', `Splat path: ${SPLAT_PATH}`);
+  debugLogger.log('info', `Test mode: ${TEST_MODE}`);
 
-  // Check libraries
   if (typeof THREE === 'undefined') {
-    debugLogger.log('error', '❌ Three.js NOT loaded!');
-    alert('Three.js failed to load!');
+    debugLogger.log('error', '❌ Three.js not loaded');
     return;
   }
   debugLogger.log('success', '✅ Three.js loaded');
 
-  if (typeof THREE.PLYLoader === 'undefined') {
-    debugLogger.log('error', '❌ PLYLoader NOT loaded!');
-    debugLogger.log('info', 'Trying to create PLYLoader anyway...');
-  } else {
-    debugLogger.log('success', '✅ PLYLoader available');
-  }
-
   if (typeof tf === 'undefined') {
-    debugLogger.log('error', '❌ TensorFlow NOT loaded!');
-    alert('TensorFlow failed to load!');
+    debugLogger.log('error', '❌ TensorFlow not loaded');
     return;
   }
   debugLogger.log('success', '✅ TensorFlow loaded');
 
   if (typeof poseDetection === 'undefined') {
-    debugLogger.log('error', '❌ Pose Detection NOT loaded!');
-    alert('Pose Detection failed to load!');
+    debugLogger.log('error', '❌ Pose Detection not loaded');
     return;
   }
   debugLogger.log('success', '✅ Pose Detection loaded');
@@ -141,45 +202,27 @@ function init() {
   const startBtn = document.getElementById('start-btn');
   const instructions = document.getElementById('instructions');
 
-  if (!startBtn) {
-    debugLogger.log('error', '❌ Start button not found!');
-    return;
-  }
-
   startBtn.addEventListener('click', async () => {
-    debugLogger.log('success', '🎯 START BUTTON CLICKED!');
+    debugLogger.log('success', '🎯 START CLICKED');
     instructions.classList.add('hidden');
-    
-    try {
-      await startAR();
-    } catch (error) {
-      debugLogger.log('error', `Button click error: ${error.message}`);
-      console.error(error);
-    }
+    await startAR();
   });
 
-  debugLogger.updateStatus('Ready - Tap Start');
-  debugLogger.log('success', '✅ Init complete. Click Start!');
+  debugLogger.updateStatus('Ready');
+  debugLogger.log('success', '✅ Ready to start');
 }
 
 // === START AR ===
 async function startAR() {
-  debugLogger.log('info', '▶️ startAR() called');
-  
   try {
-    debugLogger.updateStatus('Checking camera...');
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error('Camera API not available');
-    }
+    debugLogger.log('info', '▶️ Starting AR...');
 
     canvas = document.getElementById('output-canvas');
     ctx = canvas.getContext('2d');
     video = document.getElementById('video');
 
     debugLogger.updateStatus('Requesting camera...');
-    debugLogger.log('info', `📹 Requesting ${CAMERA_MODE} camera...`);
-
+    
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: CAMERA_MODE,
@@ -188,102 +231,37 @@ async function startAR() {
       }
     });
 
-    debugLogger.log('success', '✅ Camera permission granted');
-
     video.srcObject = stream;
     
     await new Promise((resolve) => {
       video.onloadedmetadata = () => {
         video.play();
-        debugLogger.log('success', `✅ Video: ${video.videoWidth}x${video.videoHeight}`);
         resolve();
       };
     });
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    debugLogger.updateVideoStatus(`${video.videoWidth}x${video.videoHeight}`);
+    debugLogger.log('success', `✅ Video: ${video.videoWidth}x${video.videoHeight}`);
 
-    debugLogger.updateStatus('Setting up 3D...');
     await setupThreeJS();
 
     debugLogger.updateStatus('Loading AI...');
-    debugLogger.updateModelStatus('Loading...');
-    debugLogger.log('info', '🤖 Loading MoveNet...');
-
     poseModel = await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
       { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
     );
 
     debugLogger.log('success', '✅ MoveNet loaded');
-    debugLogger.updateModelStatus('Ready');
-
-    if (TEST_MODE) {
-      debugLogger.updateStatus('🧪 TEST MODE - PLY visible');
-    } else {
-      debugLogger.updateStatus('✅ Running - Show back!');
-    }
+    debugLogger.updateStatus(TEST_MODE ? '🧪 TEST MODE' : '✅ Running');
 
     isRunning = true;
-    debugLogger.log('success', '🎬 Starting render loop...');
     renderLoop();
 
   } catch (error) {
-    debugLogger.log('error', `❌ startAR ERROR: ${error.message}`);
-    debugLogger.log('error', `Stack: ${error.stack}`);
-    debugLogger.updateStatus(`Error: ${error.message}`);
-    alert(`Failed to start: ${error.message}`);
+    debugLogger.log('error', `❌ Error: ${error.message}`);
+    alert(`Failed: ${error.message}`);
   }
-}
-
-// === TRY LOADING PLY FROM MULTIPLE PATHS ===
-async function tryLoadPLY(loader) {
-  debugLogger.log('info', `🔍 Trying ${PLY_PATHS.length} different paths...`);
-  
-  for (let i = 0; i < PLY_PATHS.length; i++) {
-    const path = PLY_PATHS[i];
-    debugLogger.log('info', `Attempt ${i + 1}: ${path}`);
-    
-    try {
-      const geometry = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Timeout after 5s'));
-        }, 5000);
-
-        loader.load(
-          path,
-          (geo) => {
-            clearTimeout(timeout);
-            debugLogger.log('success', `✅ SUCCESS with path: ${path}`);
-            resolve(geo);
-          },
-          (xhr) => {
-            if (xhr.lengthComputable) {
-              const percent = (xhr.loaded / xhr.total * 100).toFixed(0);
-              debugLogger.log('info', `  Loading: ${percent}%`);
-            }
-          },
-          (err) => {
-            clearTimeout(timeout);
-            debugLogger.log('warning', `  ❌ Failed: ${err.message || err}`);
-            reject(err);
-          }
-        );
-      });
-
-      // If we get here, it worked!
-      debugLogger.log('success', `🎉 PLY loaded from: ${path}`);
-      return geometry;
-
-    } catch (err) {
-      debugLogger.log('warning', `Path ${i + 1} failed: ${err.message}`);
-      continue;
-    }
-  }
-
-  // None worked
-  throw new Error(`PLY not found in any of ${PLY_PATHS.length} paths. Check file exists in assets/ folder.`);
 }
 
 // === SETUP THREE.JS ===
@@ -296,102 +274,78 @@ async function setupThreeJS() {
     preserveDrawingBuffer: true 
   });
   renderer.setSize(canvas.width, canvas.height);
-  debugLogger.log('success', `Renderer: ${canvas.width}x${canvas.height}`);
 
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000);
   camera.position.set(0, 0, 0);
-  debugLogger.log('success', 'Scene & Camera created');
 
-  if (USE_PLY_MODEL) {
-    debugLogger.log('info', '📦 Attempting to load PLY...');
-    debugLogger.updateAssetStatus('Loading PLY...');
+  if (USE_GAUSSIAN_SPLAT) {
+    debugLogger.log('info', '🌟 Loading Gaussian Splat...');
+    debugLogger.updateAssetStatus('Loading splat...');
 
     try {
-      const loader = new THREE.PLYLoader();
-      debugLogger.log('info', '✓ PLYLoader instantiated');
+      const loader = new GaussianSplatLoader();
+      
+      debugLogger.log('info', `Fetching: ${SPLAT_PATH}`);
+      
+      const geometry = await loader.load(SPLAT_PATH, (progress) => {
+        debugLogger.log('info', `Loaded: ${(progress.loaded / 1024).toFixed(1)} KB`);
+      });
 
-      // Try multiple paths
-      const geometry = await tryLoadPLY(loader);
-
-      debugLogger.log('success', `✅ Vertices: ${geometry.attributes.position.count}`);
-      debugLogger.log('info', `Has colors: ${geometry.attributes.color ? 'YES' : 'NO'}`);
-      debugLogger.log('info', `Has normals: ${geometry.attributes.normal ? 'YES' : 'NO'}`);
-
-      geometry.center();
-      geometry.computeBoundingBox();
-      if (!geometry.attributes.normal) {
-        geometry.computeVertexNormals();
-      }
+      debugLogger.log('success', `✅ Splat loaded: ${geometry.attributes.position.count} points`);
 
       const bbox = geometry.boundingBox;
       const size = new THREE.Vector3();
       bbox.getSize(size);
-      plyBoundingBoxSize = size;
+      splatBoundingBoxSize = size;
 
-      debugLogger.log('success', `📦 Size: (${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)})`);
+      debugLogger.log('success', `📦 Size: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)}`);
 
-      // Calculate recommended scale
-      const avgSize = (size.x + size.y + size.z) / 3;
-      const recommendedScale = 0.4 / avgSize;
-      debugLogger.log('info', `💡 Recommended scale: ${recommendedScale.toFixed(6)}`);
-
-      // Create material
+      // Create splat material with additive blending for glow effect
       const material = new THREE.PointsMaterial({
-        size: 0.05,
-        vertexColors: geometry.attributes.color ? true : false,
-        color: geometry.attributes.color ? 0xffffff : 0xff0000,
-        sizeAttenuation: false,
-        transparent: false,
-        opacity: 1.0
+        size: 0.03,
+        vertexColors: true,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
       });
 
       wingsMesh = new THREE.Points(geometry, material);
 
       if (TEST_MODE) {
         wingsMesh.position.set(0, 0, -3);
-        wingsMesh.scale.set(1, 1, 1);
+        wingsMesh.scale.set(0.5, 0.5, 0.5);
         wingsMesh.visible = true;
-        debugLogger.log('warning', '🧪 TEST MODE: Wings at (0,0,-3) scale=1');
+        debugLogger.log('warning', '🧪 TEST: Splat at (0,0,-3)');
       } else {
         wingsMesh.visible = false;
       }
 
       scene.add(wingsMesh);
-      debugLogger.log('success', '✅ Wings added to scene');
-
+      
       leftWing = wingsMesh;
       rightWing = wingsMesh;
-      plyLoaded = true;
+      splatLoaded = true;
 
-      debugLogger.updateAssetStatus('PLY loaded ✓');
+      debugLogger.updateAssetStatus('✅ Splat loaded');
+      debugLogger.log('success', '🎉 Ready for tracking!');
 
     } catch (err) {
-      debugLogger.log('error', `❌ PLY FAILED: ${err.message}`);
-      debugLogger.log('error', 'Please check:');
-      debugLogger.log('error', '1. File exists at ./assets/wings.ply');
-      debugLogger.log('error', '2. File is a valid PLY file');
-      debugLogger.log('error', '3. Server allows loading .ply files');
-      debugLogger.log('warning', '⚠️ Using box placeholders instead');
+      debugLogger.log('error', `❌ Splat failed: ${err.message}`);
+      debugLogger.log('warning', 'Creating fallback boxes...');
       createBoxWings();
     }
   } else {
     createBoxWings();
   }
-
-  debugLogger.log('success', '✅ Three.js setup complete');
 }
 
 // === BOX FALLBACK ===
 function createBoxWings() {
-  debugLogger.log('info', '📦 Creating box placeholders...');
-  
   const geo = new THREE.BoxGeometry(0.15, 0.35, 0.08);
-  const mat = new THREE.MeshBasicMaterial({ 
-    color: 0x00ff88, 
-    transparent: true, 
-    opacity: 0.8 
-  });
+  const mat = new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.8 });
 
   leftWing = new THREE.Mesh(geo, mat);
   rightWing = new THREE.Mesh(geo, mat.clone());
@@ -404,7 +358,7 @@ function createBoxWings() {
   rightWing.visible = false;
 
   debugLogger.updateAssetStatus('Box placeholders');
-  debugLogger.log('success', '✅ Boxes created (PLY failed to load)');
+  debugLogger.log('success', '✅ Boxes created');
 }
 
 // === RENDER LOOP ===
@@ -415,12 +369,11 @@ async function renderLoop() {
   frameCount++;
   const now = Date.now();
   if (now - lastFpsUpdate >= 1000) {
-    const fps = frameCount / ((now - lastFpsUpdate) / 1000);
-    debugLogger.updateFPS(fps);
+    debugLogger.updateFPS(frameCount / ((now - lastFpsUpdate) / 1000));
     
     if (wingsMesh) {
       const vis = wingsMesh.visible ? '👁️' : '🚫';
-      debugLogger.log('info', `${vis} Wings: pos=(${wingsMesh.position.z.toFixed(2)}), scale=${wingsMesh.scale.x.toFixed(4)}`);
+      debugLogger.log('info', `${vis} Splat scale=${wingsMesh.scale.x.toFixed(3)}`);
     }
     
     frameCount = 0;
@@ -433,7 +386,7 @@ async function renderLoop() {
   ctx.drawImage(video, CAMERA_MODE === 'user' ? -canvas.width : 0, 0, canvas.width, canvas.height);
   ctx.restore();
 
-  // Pose detection
+  // Pose tracking
   if (video.readyState === video.HAVE_ENOUGH_DATA && !TEST_MODE) {
     try {
       const poses = await poseModel.estimatePoses(video);
@@ -448,29 +401,23 @@ async function renderLoop() {
         if (ls?.score > 0.3 && rs?.score > 0.3) {
           const dist = Math.hypot(rs.x - ls.x, rs.y - ls.y);
           
-          if (!baseShoulderDistance) {
-            baseShoulderDistance = dist;
-          }
+          if (!baseShoulderDistance) baseShoulderDistance = dist;
 
           const depth = -2.0 - (150 / dist);
           const scale = Math.max(0.5, dist / 150);
 
-          let spine = {
-            x: (ls.x + rs.x) / 2,
-            y: (ls.y + rs.y) / 2
-          };
-
+          let spine = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
           if (lh?.score > 0.2 && rh?.score > 0.2) {
             spine.y = (spine.y + (lh.y + rh.y) / 2) / 2;
           }
 
           const angle = Math.atan2(rs.y - ls.y, rs.x - ls.x);
 
-          if (plyLoaded && wingsMesh) {
-            positionWings(wingsMesh, ls, rs, spine, depth, scale, angle);
+          if (splatLoaded && wingsMesh) {
+            positionSplat(wingsMesh, ls, rs, spine, depth, scale, angle);
             if (!wingsMesh.visible) {
               wingsMesh.visible = true;
-              debugLogger.log('success', '👁️ Wings NOW VISIBLE');
+              debugLogger.log('success', '👁️ Splat VISIBLE');
             }
           } else if (leftWing && rightWing) {
             positionBox(leftWing, ls, spine, depth, scale, angle, 'left');
@@ -502,9 +449,9 @@ async function renderLoop() {
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION WINGS ===
-function positionWings(wings, ls, rs, spine, depth, scale, angle) {
-  if (!wings) return;
+// === POSITION SPLAT ===
+function positionSplat(splat, ls, rs, spine, depth, scale, angle) {
+  if (!splat) return;
 
   let spineX = (spine.x / video.videoWidth) * 2 - 1;
   let spineY = -(spine.y / video.videoHeight) * 2 + 1;
@@ -519,25 +466,25 @@ function positionWings(wings, ls, rs, spine, depth, scale, angle) {
   smoothedWingsPos.y += (targetY - smoothedWingsPos.y) * SMOOTHING_FACTOR;
   smoothedWingsPos.z += (targetZ - smoothedWingsPos.z) * SMOOTHING_FACTOR;
 
-  wings.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
+  splat.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
 
   // Auto-scale
   let scaleFactor;
-  if (plyBoundingBoxSize) {
-    const avg = (plyBoundingBoxSize.x + plyBoundingBoxSize.y + plyBoundingBoxSize.z) / 3;
-    scaleFactor = (0.4 / avg) * scale;
+  if (splatBoundingBoxSize) {
+    const avg = (splatBoundingBoxSize.x + splatBoundingBoxSize.y + splatBoundingBoxSize.z) / 3;
+    scaleFactor = (0.5 / avg) * scale;
   } else {
-    scaleFactor = scale * 0.5;
+    scaleFactor = scale * 0.3;
   }
 
-  wings.scale.set(scaleFactor, scaleFactor, scaleFactor);
+  splat.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
   const bodyRot = CAMERA_MODE === 'user' ? -angle : angle;
   smoothedWingsRot.x += (-0.2 - smoothedWingsRot.x) * SMOOTHING_FACTOR;
   smoothedWingsRot.y += ((bodyRot * 0.5) - smoothedWingsRot.y) * SMOOTHING_FACTOR;
   smoothedWingsRot.z += ((bodyRot * 0.2) - smoothedWingsRot.z) * SMOOTHING_FACTOR;
 
-  wings.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
+  splat.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
 }
 
 // === POSITION BOX ===
@@ -592,8 +539,5 @@ function drawDebugPoints(ctx, keypoints) {
   });
 }
 
-// === START ON LOAD ===
-window.addEventListener('DOMContentLoaded', () => {
-  console.log('DOM loaded, calling init()');
-  init();
-});
+// === START ===
+window.addEventListener('DOMContentLoaded', init);
