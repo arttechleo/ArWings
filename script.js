@@ -292,24 +292,44 @@ async function setupThreeJS() {
         debugLogger.log('info', `Loaded: ${(progress.loaded / 1024).toFixed(1)} KB`);
       });
 
-      debugLogger.log('success', `✅ Splat loaded: ${geometry.attributes.position.count} points`);
+      const vertexCount = geometry.attributes.position.count;
+      debugLogger.log('success', `✅ Splat loaded: ${vertexCount} points`);
 
+      // Compute bounding box properly
+      geometry.computeBoundingBox();
       const bbox = geometry.boundingBox;
+      
+      if (!bbox) {
+        debugLogger.log('error', 'Bounding box is null!');
+        throw new Error('Failed to compute bounding box');
+      }
+
       const size = new THREE.Vector3();
       bbox.getSize(size);
+      
+      // Validate bounding box
+      if (isNaN(size.x) || isNaN(size.y) || isNaN(size.z)) {
+        debugLogger.log('error', `Invalid bbox size: ${size.x}, ${size.y}, ${size.z}`);
+        debugLogger.log('warning', 'Setting default bbox size');
+        size.set(1, 1, 1);
+      }
+      
       splatBoundingBoxSize = size;
 
+      debugLogger.log('success', `📦 Bbox: Min(${bbox.min.x.toFixed(2)}, ${bbox.min.y.toFixed(2)}, ${bbox.min.z.toFixed(2)})`);
+      debugLogger.log('success', `📦 Bbox: Max(${bbox.max.x.toFixed(2)}, ${bbox.max.y.toFixed(2)}, ${bbox.max.z.toFixed(2)})`);
       debugLogger.log('success', `📦 Size: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)}`);
 
-      // Create splat material with additive blending for glow effect
+      // Create splat material with better visibility
       const material = new THREE.PointsMaterial({
-        size: 0.03,
+        size: 0.04,  // Larger points
         vertexColors: true,
         sizeAttenuation: true,
         transparent: true,
-        opacity: 0.8,
+        opacity: 0.9,  // More opaque
         blending: THREE.AdditiveBlending,
-        depthWrite: false
+        depthWrite: false,
+        depthTest: true
       });
 
       wingsMesh = new THREE.Points(geometry, material);
@@ -318,9 +338,10 @@ async function setupThreeJS() {
         wingsMesh.position.set(0, 0, -3);
         wingsMesh.scale.set(0.5, 0.5, 0.5);
         wingsMesh.visible = true;
-        debugLogger.log('warning', '🧪 TEST: Splat at (0,0,-3)');
+        debugLogger.log('warning', '🧪 TEST: Splat at (0,0,-3) scale=0.5');
       } else {
         wingsMesh.visible = false;
+        debugLogger.log('info', 'Splat hidden, waiting for pose detection');
       }
 
       scene.add(wingsMesh);
@@ -334,6 +355,7 @@ async function setupThreeJS() {
 
     } catch (err) {
       debugLogger.log('error', `❌ Splat failed: ${err.message}`);
+      debugLogger.log('error', err.stack);
       debugLogger.log('warning', 'Creating fallback boxes...');
       createBoxWings();
     }
@@ -372,8 +394,10 @@ async function renderLoop() {
     debugLogger.updateFPS(frameCount / ((now - lastFpsUpdate) / 1000));
     
     if (wingsMesh) {
-      const vis = wingsMesh.visible ? '👁️' : '🚫';
-      debugLogger.log('info', `${vis} Splat scale=${wingsMesh.scale.x.toFixed(3)}`);
+      const vis = wingsMesh.visible ? '👁️ VISIBLE' : '🚫 HIDDEN';
+      const pos = `pos=(${wingsMesh.position.x.toFixed(2)}, ${wingsMesh.position.y.toFixed(2)}, ${wingsMesh.position.z.toFixed(2)})`;
+      const scl = `scale=${wingsMesh.scale.x.toFixed(4)}`;
+      debugLogger.log('info', `${vis} | ${pos} | ${scl}`);
     }
     
     frameCount = 0;
@@ -401,12 +425,16 @@ async function renderLoop() {
         if (ls?.score > 0.3 && rs?.score > 0.3) {
           const dist = Math.hypot(rs.x - ls.x, rs.y - ls.y);
           
-          if (!baseShoulderDistance) baseShoulderDistance = dist;
+          if (!baseShoulderDistance) {
+            baseShoulderDistance = dist;
+            debugLogger.log('info', `👤 Shoulder width: ${dist.toFixed(2)}px`);
+          }
 
           const depth = -2.0 - (150 / dist);
           const scale = Math.max(0.5, dist / 150);
 
           let spine = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
+          
           if (lh?.score > 0.2 && rh?.score > 0.2) {
             spine.y = (spine.y + (lh.y + rh.y) / 2) / 2;
           }
@@ -415,9 +443,10 @@ async function renderLoop() {
 
           if (splatLoaded && wingsMesh) {
             positionSplat(wingsMesh, ls, rs, spine, depth, scale, angle);
+            
             if (!wingsMesh.visible) {
               wingsMesh.visible = true;
-              debugLogger.log('success', '👁️ Splat VISIBLE');
+              debugLogger.log('success', '👁️ SPLAT NOW VISIBLE');
             }
           } else if (leftWing && rightWing) {
             positionBox(leftWing, ls, spine, depth, scale, angle, 'left');
@@ -426,22 +455,24 @@ async function renderLoop() {
             rightWing.visible = true;
           }
 
-          debugLogger.updatePoseStatus(`Detected (${ls.score.toFixed(2)})`);
+          debugLogger.updatePoseStatus(`✅ Shoulders (${ls.score.toFixed(2)})`);
           drawDebugPoints(ctx, [ls, rs, lh, rh].filter(Boolean));
         } else {
           if (wingsMesh) wingsMesh.visible = false;
           if (leftWing) leftWing.visible = false;
           if (rightWing) rightWing.visible = false;
-          debugLogger.updatePoseStatus('Low confidence');
+          debugLogger.updatePoseStatus('⚠️ Low confidence');
+          baseShoulderDistance = null;
         }
       } else {
         if (wingsMesh) wingsMesh.visible = false;
         if (leftWing) leftWing.visible = false;
         if (rightWing) rightWing.visible = false;
-        debugLogger.updatePoseStatus('No person');
+        debugLogger.updatePoseStatus('❌ No person');
+        baseShoulderDistance = null;
       }
     } catch (err) {
-      debugLogger.log('error', `Pose: ${err.message}`);
+      debugLogger.log('error', `Pose error: ${err.message}`);
     }
   }
 
@@ -451,38 +482,72 @@ async function renderLoop() {
 
 // === POSITION SPLAT ===
 function positionSplat(splat, ls, rs, spine, depth, scale, angle) {
-  if (!splat) return;
+  if (!splat) {
+    debugLogger.log('error', 'positionSplat: splat is null');
+    return;
+  }
 
+  // Convert screen coordinates to normalized device coordinates (-1 to 1)
   let spineX = (spine.x / video.videoWidth) * 2 - 1;
   let spineY = -(spine.y / video.videoHeight) * 2 + 1;
 
   if (CAMERA_MODE === 'user') spineX = -spineX;
 
+  const downwardShift = 0.1 * scale;
+  
   const targetX = spineX;
-  const targetY = spineY - (0.1 * scale);
+  const targetY = spineY - downwardShift;
   const targetZ = depth - (0.3 * scale);
 
+  // Smooth position
   smoothedWingsPos.x += (targetX - smoothedWingsPos.x) * SMOOTHING_FACTOR;
   smoothedWingsPos.y += (targetY - smoothedWingsPos.y) * SMOOTHING_FACTOR;
   smoothedWingsPos.z += (targetZ - smoothedWingsPos.z) * SMOOTHING_FACTOR;
 
   splat.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
 
-  // Auto-scale
+  // FIXED: Calculate scale properly
   let scaleFactor;
-  if (splatBoundingBoxSize) {
+  
+  if (splatBoundingBoxSize && 
+      !isNaN(splatBoundingBoxSize.x) && 
+      !isNaN(splatBoundingBoxSize.y) && 
+      !isNaN(splatBoundingBoxSize.z)) {
+    
     const avg = (splatBoundingBoxSize.x + splatBoundingBoxSize.y + splatBoundingBoxSize.z) / 3;
-    scaleFactor = (0.5 / avg) * scale;
+    
+    if (avg > 0 && !isNaN(avg)) {
+      // Target size: make wings about 0.6 units wide
+      scaleFactor = (0.6 / avg) * scale;
+      debugLogger.log('info', `Scale calc: bbox_avg=${avg.toFixed(2)}, scale=${scale.toFixed(2)}, result=${scaleFactor.toFixed(4)}`);
+    } else {
+      scaleFactor = scale * 0.5;
+      debugLogger.log('warning', 'Bbox average invalid, using fallback scale');
+    }
   } else {
-    scaleFactor = scale * 0.3;
+    // Fallback if bounding box is invalid
+    scaleFactor = scale * 0.5;
+    debugLogger.log('warning', 'No valid bounding box, using fallback scale');
+  }
+
+  // Safety check
+  if (isNaN(scaleFactor) || scaleFactor <= 0) {
+    scaleFactor = 1.0;
+    debugLogger.log('error', 'Scale is NaN or invalid, using 1.0');
   }
 
   splat.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
+  // Rotation to match body angle
   const bodyRot = CAMERA_MODE === 'user' ? -angle : angle;
-  smoothedWingsRot.x += (-0.2 - smoothedWingsRot.x) * SMOOTHING_FACTOR;
-  smoothedWingsRot.y += ((bodyRot * 0.5) - smoothedWingsRot.y) * SMOOTHING_FACTOR;
-  smoothedWingsRot.z += ((bodyRot * 0.2) - smoothedWingsRot.z) * SMOOTHING_FACTOR;
+  
+  const targetRotX = -0.2; // Slight forward tilt
+  const targetRotY = bodyRot * 0.5;
+  const targetRotZ = bodyRot * 0.2;
+
+  smoothedWingsRot.x += (targetRotX - smoothedWingsRot.x) * SMOOTHING_FACTOR;
+  smoothedWingsRot.y += (targetRotY - smoothedWingsRot.y) * SMOOTHING_FACTOR;
+  smoothedWingsRot.z += (targetRotZ - smoothedWingsRot.z) * SMOOTHING_FACTOR;
 
   splat.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
 }
