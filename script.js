@@ -487,3 +487,4 @@ function drawDebugPoints(ctx, keypoints) {
 // === START WHEN PAGE LOADS ===
 window.addEventListener('DOMContentLoaded', () => {
   init();
+});
