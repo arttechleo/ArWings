@@ -8,16 +8,20 @@
     <title>AR Back Wings</title>
     <link rel="stylesheet" href="style.css">
 
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three-gaussian-splat": "https://unpkg.com/three-gaussian-splat@1.2.0/dist/three-gaussian-splat.module.js",
-            "@tensorflow/tfjs": "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.es2017.js",
-            "@tensorflow-models/pose-detection": "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.js"
-        }
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+
+        // --- CHANGE THIS LINE ---
+        // "three-gaussian-splat": "https://unpkg.com/three-gaussian-splat@1.2.0/dist/three-gaussian-splat.module.js",
+        "three-gaussian-splat": "https://cdn.jsdelivr.net/npm/three-gaussian-splat@1.2.0/dist/three-gaussian-splat.module.js",
+        
+        "@tensorflow/tfjs": "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.es2017.js",
+        "@tensorflow-models/pose-detection": "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.js"
     }
-    </script>
+}
+</script>
 </head>
 <body>
     <canvas id="output-canvas"></canvas>
