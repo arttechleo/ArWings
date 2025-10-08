@@ -15,7 +15,7 @@ let smoothedRightRot = { x: 0, y: 0, z: 0 };
 const SMOOTHING_FACTOR = 0.3; // Lower = smoother but slower, Higher = faster but jittery
 
 // Camera configuration - change 'user' to 'environment' for rear camera
-const CAMERA_MODE = 'user'; // 'user' = front camera, 'environment' = rear camera
+const CAMERA_MODE = 'environment'; // 'user' = front camera, 'environment' = rear camera
 
 // === DEBUG LOGGER CLASS ===
 class DebugLogger {
