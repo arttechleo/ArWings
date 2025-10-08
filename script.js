@@ -1,4 +1,5 @@
-import * as GaussianSplats3D from 'https://unpkg.com/@mkkellogg/gaussian-splats-3d@0.5.0/build/gaussian-splats-3d.module.js';
+import * as THREE from 'three';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 
 let scene, camera, renderer;
 let leftWing, rightWing;
@@ -21,13 +22,12 @@ const SMOOTHING_FACTOR = 0.4;
 // Store initial shoulder distance
 let baseShoulderDistance = null;
 
-// Gaussian Splat mesh
-let wingsSplatMesh = null;
-let viewer = null;
+// Wings mesh
+let wingsMesh = null;
 
 // Configuration
-const USE_GAUSSIAN_SPLAT = true;
-const SPLAT_PLY_PATH = 'assets/wings.ply'; // Your Gaussian Splat PLY file
+const USE_PLY_MODEL = true;
+const PLY_PATH_WINGS = 'assets/wings.ply'; // Your PLY file (can be Gaussian Splat format)
 
 // Camera configuration
 const CAMERA_MODE = 'environment';
@@ -107,14 +107,7 @@ function init() {
   debugLogger = new DebugLogger();
   debugLogger.log('info', '=== AR Back Wings Starting ===');
   debugLogger.log('info', `Camera Mode: ${CAMERA_MODE === 'user' ? 'Front (Selfie)' : 'Rear'}`);
-  debugLogger.log('info', 'Using Gaussian Splatting renderer');
-  
-  if (typeof THREE === 'undefined') {
-    debugLogger.log('error', 'Three.js not loaded!');
-    alert('Three.js failed to load. Please refresh the page.');
-    return;
-  }
-  debugLogger.log('success', 'Three.js loaded');
+  debugLogger.log('success', 'Three.js ES6 module loaded');
 
   if (typeof tf === 'undefined') {
     debugLogger.log('error', 'TensorFlow.js not loaded!');
@@ -129,13 +122,6 @@ function init() {
     return;
   }
   debugLogger.log('success', 'Pose Detection loaded');
-
-  if (typeof GaussianSplats3D === 'undefined') {
-    debugLogger.log('error', 'Gaussian Splats 3D not loaded!');
-    alert('Gaussian Splatting library failed to load. Please refresh the page.');
-    return;
-  }
-  debugLogger.log('success', 'Gaussian Splats 3D loaded');
 
   const startBtn = document.getElementById('start-btn');
   const instructions = document.getElementById('instructions');
@@ -231,11 +217,11 @@ async function startAR() {
   }
 }
 
-// === SETUP THREE.JS with Gaussian Splatting ===
+// === SETUP THREE.JS with PLY Loader ===
 async function setupThreeJS() {
   renderer = new THREE.WebGLRenderer({ 
     alpha: true, 
-    antialias: false,
+    antialias: true,
     preserveDrawingBuffer: true 
   });
   renderer.setSize(canvas.width, canvas.height);
@@ -250,51 +236,71 @@ async function setupThreeJS() {
   );
   camera.position.set(0, 0, 0);
 
-  if (USE_GAUSSIAN_SPLAT) {
-    debugLogger.log('info', 'Loading Gaussian Splat PLY file...');
-    debugLogger.updateAssetStatus('Loading Gaussian Splat...');
+  if (USE_PLY_MODEL) {
+    debugLogger.log('info', 'Loading PLY file (Gaussian Splat format)...');
+    debugLogger.updateAssetStatus('Loading PLY...');
     
     try {
-      // Create Gaussian Splat Viewer
-      viewer = new GaussianSplats3D.Viewer({
-        scene: scene,
-        renderer: renderer,
-        camera: camera,
-        useBuiltInControls: false,
-        gpuAcceleratedSort: true,
-        integerBasedSort: true,
-        halfPrecisionCovariancesOnGPU: true,
-        dynamicScene: true,
-        webXRMode: GaussianSplats3D.WebXRMode.None,
-        renderMode: GaussianSplats3D.RenderMode.Always,
-        sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant
+      const loader = new PLYLoader();
+
+      debugLogger.log('info', 'PLY Loader initialized');
+
+      const geometry = await new Promise((resolve, reject) => {
+        loader.load(
+          PLY_PATH_WINGS,
+          (geo) => {
+            debugLogger.log('success', 'PLY geometry loaded');
+            resolve(geo);
+          },
+          (progress) => {
+            if (progress.total > 0) {
+              const percent = ((progress.loaded / progress.total) * 100).toFixed(0);
+              debugLogger.log('info', `Loading: ${percent}%`);
+            }
+          },
+          (error) => {
+            debugLogger.log('error', `PLY load error: ${error}`);
+            reject(error);
+          }
+        );
       });
 
-      debugLogger.log('info', 'Viewer created, loading PLY...');
+      debugLogger.log('info', 'Processing PLY geometry...');
 
-      // Load the Gaussian Splat PLY file
-      await viewer.addSplatScene(SPLAT_PLY_PATH, {
-        splatAlphaRemovalThreshold: 5,
-        showLoadingUI: false,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0, 1],
-        scale: [1, 1, 1]
+      // Center and compute normals
+      geometry.center();
+      geometry.computeBoundingBox();
+      geometry.computeVertexNormals();
+
+      const bbox = geometry.boundingBox;
+      debugLogger.log('info', `Bounds: X[${bbox.min.x.toFixed(2)}, ${bbox.max.x.toFixed(2)}] Y[${bbox.min.y.toFixed(2)}, ${bbox.max.y.toFixed(2)}] Z[${bbox.min.z.toFixed(2)}, ${bbox.max.z.toFixed(2)}]`);
+
+      // Create material for point cloud rendering (Gaussian Splat style)
+      const material = new THREE.PointsMaterial({
+        size: 0.01,
+        vertexColors: true,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
       });
 
-      debugLogger.log('success', 'Gaussian Splat PLY loaded!');
-      debugLogger.updateAssetStatus('Gaussian Splat loaded');
+      // Create Points mesh (for Gaussian Splat PLY)
+      wingsMesh = new THREE.Points(geometry, material);
+      wingsMesh.visible = false;
 
-      // Get the splat mesh
-      wingsSplatMesh = viewer.splatMesh;
-      wingsSplatMesh.visible = false;
+      scene.add(wingsMesh);
+      debugLogger.log('success', 'PLY mesh added to scene');
 
-      leftWing = wingsSplatMesh;
-      rightWing = wingsSplatMesh;
+      leftWing = wingsMesh;
+      rightWing = wingsMesh;
 
-      debugLogger.log('success', 'Gaussian Splat mesh ready');
+      debugLogger.updateAssetStatus('PLY loaded (Point Cloud)');
+      debugLogger.log('success', 'Wings ready');
 
     } catch (err) {
-      debugLogger.log('error', `Gaussian Splat load failed: ${err.message}`);
+      debugLogger.log('error', `PLY load failed: ${err.message}`);
       debugLogger.log('info', 'Falling back to box placeholders');
       createBoxWings();
     }
@@ -393,10 +399,10 @@ async function renderLoop() {
             rightShoulder.x - leftShoulder.x
           );
 
-          if (USE_GAUSSIAN_SPLAT && wingsSplatMesh) {
-            positionGaussianSplatOnBack(wingsSplatMesh, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle);
-            wingsSplatMesh.visible = true;
-          } else if (leftWing && rightWing && leftWing !== wingsSplatMesh) {
+          if (USE_PLY_MODEL && wingsMesh) {
+            positionWingsOnBack(wingsMesh, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle);
+            wingsMesh.visible = true;
+          } else if (leftWing && rightWing && leftWing !== wingsMesh) {
             if (CAMERA_MODE === 'user') {
               positionWingGluedToBack(leftWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
               positionWingGluedToBack(rightWing, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'right');
@@ -414,16 +420,16 @@ async function renderLoop() {
           if (leftHip && rightHip) debugPoints.push(leftHip, rightHip);
           drawDebugPoints(ctx, debugPoints);
         } else {
-          if (wingsSplatMesh) wingsSplatMesh.visible = false;
-          if (leftWing && leftWing !== wingsSplatMesh) leftWing.visible = false;
-          if (rightWing && rightWing !== wingsSplatMesh) rightWing.visible = false;
+          if (wingsMesh) wingsMesh.visible = false;
+          if (leftWing && leftWing !== wingsMesh) leftWing.visible = false;
+          if (rightWing && rightWing !== wingsMesh) rightWing.visible = false;
           debugLogger.updatePoseStatus('Low confidence');
           baseShoulderDistance = null;
         }
       } else {
-        if (wingsSplatMesh) wingsSplatMesh.visible = false;
-        if (leftWing && leftWing !== wingsSplatMesh) leftWing.visible = false;
-        if (rightWing && rightWing !== wingsSplatMesh) rightWing.visible = false;
+        if (wingsMesh) wingsMesh.visible = false;
+        if (leftWing && leftWing !== wingsMesh) leftWing.visible = false;
+        if (rightWing && rightWing !== wingsMesh) rightWing.visible = false;
         debugLogger.updatePoseStatus('No person detected');
         baseShoulderDistance = null;
       }
@@ -432,23 +438,13 @@ async function renderLoop() {
     }
   }
 
-  // Update Gaussian Splat viewer if it exists
-  if (viewer && USE_GAUSSIAN_SPLAT) {
-    viewer.update();
-    viewer.render();
-  } else {
-    renderer.render(scene, camera);
-  }
-  
+  renderer.render(scene, camera);
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION GAUSSIAN SPLAT ON BACK ===
-function positionGaussianSplatOnBack(splat, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle) {
-  if (!splat) {
-    debugLogger.log('error', 'Splat mesh is null');
-    return;
-  }
+// === POSITION WINGS ON BACK ===
+function positionWingsOnBack(wings, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle) {
+  if (!wings) return;
 
   let spineCenterX = (spineCenter.x / video.videoWidth) * 2 - 1;
   let spineCenterY = -(spineCenter.y / video.videoHeight) * 2 + 1;
@@ -467,10 +463,10 @@ function positionGaussianSplatOnBack(splat, leftShoulder, rightShoulder, spineCe
   smoothedWingsPos.y = smoothedWingsPos.y + (targetY - smoothedWingsPos.y) * SMOOTHING_FACTOR;
   smoothedWingsPos.z = smoothedWingsPos.z + (targetZ - smoothedWingsPos.z) * SMOOTHING_FACTOR;
 
-  splat.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
+  wings.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
   
-  // Scale for Gaussian Splat - adjust based on your model
-  splat.scale.set(scale * 0.5, scale * 0.5, scale * 0.5);
+  // Scale for point cloud - adjust based on your model size
+  wings.scale.set(scale * 0.01, scale * 0.01, scale * 0.01);
 
   const baseRotX = -0.2;
   const baseRotY = 0;
@@ -485,7 +481,7 @@ function positionGaussianSplatOnBack(splat, leftShoulder, rightShoulder, spineCe
   smoothedWingsRot.y = smoothedWingsRot.y + (targetRotY - smoothedWingsRot.y) * SMOOTHING_FACTOR;
   smoothedWingsRot.z = smoothedWingsRot.z + (targetRotZ - smoothedWingsRot.z) * SMOOTHING_FACTOR;
   
-  splat.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
+  wings.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
 }
 
 // === POSITION WING GLUED TO BACK (for box placeholders) ===
