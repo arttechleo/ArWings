@@ -12,14 +12,17 @@ let smoothedLeftPos = { x: 0, y: 0, z: 0 };
 let smoothedRightPos = { x: 0, y: 0, z: 0 };
 let smoothedLeftRot = { x: 0, y: 0, z: 0 };
 let smoothedRightRot = { x: 0, y: 0, z: 0 };
-const SMOOTHING_FACTOR = 0.3;
+const SMOOTHING_FACTOR = 0.4; // Increased for better responsiveness
+
+// Store initial shoulder distance to maintain wing spacing
+let baseShoulderDistance = null;
 
 // Gaussian Splatting support
 let leftSplat = null;
 let rightSplat = null;
-const USE_GAUSSIAN_SPLAT = false; // Set to true when you have .splat files
-const SPLAT_PATH_LEFT = 'assets/left_wing.splat'; // Path to your left wing splat file
-const SPLAT_PATH_RIGHT = 'assets/right_wing.splat'; // Path to your right wing splat file
+const USE_GAUSSIAN_SPLAT = false;
+const SPLAT_PATH_LEFT = 'assets/left_wing.splat';
+const SPLAT_PATH_RIGHT = 'assets/right_wing.splat';
 
 // Camera configuration
 const CAMERA_MODE = 'environment';
@@ -121,7 +124,6 @@ function init() {
   }
   debugLogger.log('success', 'Pose Detection loaded');
 
-  // Check Gaussian Splatting support
   if (typeof GaussianSplats3D !== 'undefined') {
     debugLogger.log('success', 'Gaussian Splatting library loaded');
   } else {
@@ -237,13 +239,11 @@ async function setupThreeJS() {
   );
   camera.position.set(0, 0, 0);
 
-  // Load assets based on configuration
   if (USE_GAUSSIAN_SPLAT && typeof GaussianSplats3D !== 'undefined') {
     debugLogger.log('info', 'Loading Gaussian Splat assets...');
     debugLogger.updateAssetStatus('Loading Gaussian Splats...');
     
     try {
-      // Load Gaussian Splatting models
       const loader = new GaussianSplats3D.Loader();
       
       leftSplat = await loader.loadAsync(SPLAT_PATH_LEFT);
@@ -268,7 +268,6 @@ async function setupThreeJS() {
       createBoxWings();
     }
   } else {
-    // Create box placeholders
     createBoxWings();
   }
 
@@ -334,15 +333,22 @@ async function renderLoop() {
         if (leftShoulder && rightShoulder &&
             leftShoulder.score > 0.3 && rightShoulder.score > 0.3) {
 
+          // Calculate current shoulder distance
           const shoulderDist = Math.hypot(
             rightShoulder.x - leftShoulder.x,
             rightShoulder.y - leftShoulder.y
           );
 
+          // Initialize base shoulder distance on first detection
+          if (baseShoulderDistance === null) {
+            baseShoulderDistance = shoulderDist;
+            debugLogger.log('info', `Base shoulder distance set: ${baseShoulderDistance.toFixed(2)}px`);
+          }
+
           const depth = -2.0 - (150 / shoulderDist);
           const scale = Math.max(0.5, shoulderDist / 150);
 
-          // FIXED: Don't use body angle for rotation - keep wings locked to back
+          // Calculate spine/torso center
           let spineCenter = {
             x: (leftShoulder.x + rightShoulder.x) / 2,
             y: (leftShoulder.y + rightShoulder.y) / 2
@@ -354,12 +360,18 @@ async function renderLoop() {
             spineCenter.y = (spineCenter.y + hipCenterY) / 2;
           }
 
+          // Calculate shoulder orientation for body rotation
+          const shoulderAngle = Math.atan2(
+            rightShoulder.y - leftShoulder.y,
+            rightShoulder.x - leftShoulder.x
+          );
+
           if (CAMERA_MODE === 'user') {
-            positionWingOnBack(leftWing, rightShoulder, spineCenter, depth, scale, 'left');
-            positionWingOnBack(rightWing, leftShoulder, spineCenter, depth, scale, 'right');
+            positionWingGluedToBack(leftWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
+            positionWingGluedToBack(rightWing, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'right');
           } else {
-            positionWingOnBack(leftWing, leftShoulder, spineCenter, depth, scale, 'left');
-            positionWingOnBack(rightWing, rightShoulder, spineCenter, depth, scale, 'right');
+            positionWingGluedToBack(leftWing, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
+            positionWingGluedToBack(rightWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'right');
           }
 
           leftWing.visible = true;
@@ -374,11 +386,13 @@ async function renderLoop() {
           leftWing.visible = false;
           rightWing.visible = false;
           debugLogger.updatePoseStatus('Low confidence');
+          baseShoulderDistance = null; // Reset when lost
         }
       } else {
         leftWing.visible = false;
         rightWing.visible = false;
         debugLogger.updatePoseStatus('No person detected');
+        baseShoulderDistance = null; // Reset when lost
       }
     } catch (err) {
       debugLogger.log('error', `Pose detection: ${err.message}`);
@@ -389,11 +403,12 @@ async function renderLoop() {
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION WING ON BACK (FIXED - no spreading on rotation) ===
-function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, side) {
-  let shoulderX = (shoulder.x / video.videoWidth) * 2 - 1;
-  let shoulderY = -(shoulder.y / video.videoHeight) * 2 + 1;
-
+// === POSITION WING GLUED TO BACK (maintains constant spacing) ===
+function positionWingGluedToBack(wing, thisShoulder, otherShoulder, spineCenter, depth, scale, shoulderAngle, currentShoulderDist, side) {
+  // Convert to normalized coordinates
+  let shoulderX = (thisShoulder.x / video.videoWidth) * 2 - 1;
+  let shoulderY = -(thisShoulder.y / video.videoHeight) * 2 + 1;
+  
   let spineCenterX = (spineCenter.x / video.videoWidth) * 2 - 1;
   let spineCenterY = -(spineCenter.y / video.videoHeight) * 2 + 1;
 
@@ -402,17 +417,25 @@ function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, side) {
     spineCenterX = -spineCenterX;
   }
 
-  const dx = shoulderX - spineCenterX;
-  const dy = shoulderY - spineCenterY;
+  // Calculate the vector from spine to shoulder
+  const shoulderToSpineDx = shoulderX - spineCenterX;
+  const shoulderToSpineDy = shoulderY - spineCenterY;
+  const distFromSpine = Math.sqrt(shoulderToSpineDx * shoulderToSpineDx + shoulderToSpineDy * shoulderToSpineDy);
+  
+  // Normalize the vector
+  const normalizedDx = shoulderToSpineDx / distFromSpine;
+  const normalizedDy = shoulderToSpineDy / distFromSpine;
 
-  // FIXED: Constant offsets to prevent spreading
-  const inwardOffset = 0.3;
-  const downwardOffset = 0.2;
+  // FIXED OFFSET: Position wing at shoulder blade (constant distance from spine)
+  // This keeps wings at same relative position regardless of body rotation
+  const wingDistanceFromSpine = distFromSpine * 0.7; // 70% from spine to shoulder
+  const downwardShift = 0.15 * scale; // Move down to shoulder blade area
 
-  const targetX = shoulderX - (dx * inwardOffset);
-  const targetY = shoulderY - (Math.abs(dy) * downwardOffset) - (0.1 * scale);
+  const targetX = spineCenterX + (normalizedDx * wingDistanceFromSpine);
+  const targetY = spineCenterY + (normalizedDy * wingDistanceFromSpine) - downwardShift;
   const targetZ = depth - (0.4 * scale);
 
+  // Apply smoothing
   const smoothedPos = side === 'left' ? smoothedLeftPos : smoothedRightPos;
   smoothedPos.x = smoothedPos.x + (targetX - smoothedPos.x) * SMOOTHING_FACTOR;
   smoothedPos.y = smoothedPos.y + (targetY - smoothedPos.y) * SMOOTHING_FACTOR;
@@ -421,15 +444,23 @@ function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, side) {
   wing.position.set(smoothedPos.x, smoothedPos.y, smoothedPos.z);
   wing.scale.set(scale * 0.8, scale * 1.2, scale * 0.6);
 
-  // FIXED: Static rotation - wings don't rotate with body
-  const baseRotY = side === 'left' ? 0.6 : -0.6;
-  const baseRotX = -0.3;
-  const baseRotZ = side === 'left' ? -0.15 : 0.15;
+  // Rotation follows the body orientation (shoulder angle)
+  // This makes wings rotate WITH the back naturally
+  const baseRotY = side === 'left' ? 0.5 : -0.5;
+  const baseRotX = -0.2;
+  const baseRotZ = side === 'left' ? -0.1 : 0.1;
 
+  // Apply body rotation so wings follow back movement
+  const bodyRotationInfluence = CAMERA_MODE === 'user' ? -shoulderAngle : shoulderAngle;
+  const targetRotY = baseRotY + (bodyRotationInfluence * 0.5); // Reduced influence for stability
+  const targetRotX = baseRotX;
+  const targetRotZ = baseRotZ + (bodyRotationInfluence * 0.2); // Subtle roll
+
+  // Apply smoothing to rotation
   const smoothedRot = side === 'left' ? smoothedLeftRot : smoothedRightRot;
-  smoothedRot.x = smoothedRot.x + (baseRotX - smoothedRot.x) * SMOOTHING_FACTOR;
-  smoothedRot.y = smoothedRot.y + (baseRotY - smoothedRot.y) * SMOOTHING_FACTOR;
-  smoothedRot.z = smoothedRot.z + (baseRotZ - smoothedRot.z) * SMOOTHING_FACTOR;
+  smoothedRot.x = smoothedRot.x + (targetRotX - smoothedRot.x) * SMOOTHING_FACTOR;
+  smoothedRot.y = smoothedRot.y + (targetRotY - smoothedRot.y) * SMOOTHING_FACTOR;
+  smoothedRot.z = smoothedRot.z + (targetRotZ - smoothedRot.z) * SMOOTHING_FACTOR;
   
   wing.rotation.set(smoothedRot.x, smoothedRot.y, smoothedRot.z);
 }
@@ -456,4 +487,3 @@ function drawDebugPoints(ctx, keypoints) {
 // === START WHEN PAGE LOADS ===
 window.addEventListener('DOMContentLoaded', () => {
   init();
-});
