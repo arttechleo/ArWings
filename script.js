@@ -22,26 +22,28 @@ let wingsMesh = null;
 let plyLoaded = false;
 let plyBoundingBoxSize = null;
 
-// Configuration
+// Configuration - TRY DIFFERENT PATHS
 const USE_PLY_MODEL = true;
-const PLY_PATH_WINGS = './assets/wings.ply';
-const TEST_MODE = false; // Set true to see PLY without tracking
+const PLY_PATHS = [
+  './assets/wings.ply',
+  'assets/wings.ply',
+  '/assets/wings.ply',
+  '../assets/wings.ply'
+];
+const TEST_MODE = false;
 const CAMERA_MODE = 'environment';
 
-// Make accessible for debugging
+// Debug helper
 window.debugWings = () => {
   console.log('=== DEBUG INFO ===');
+  console.log('Current URL:', window.location.href);
   console.log('PLY Loaded:', plyLoaded);
   console.log('Wings Mesh:', wingsMesh);
   if (wingsMesh) {
     console.log('  Visible:', wingsMesh.visible);
     console.log('  Position:', wingsMesh.position);
     console.log('  Scale:', wingsMesh.scale);
-    console.log('  Rotation:', wingsMesh.rotation);
   }
-  console.log('Scene children:', scene?.children.length);
-  console.log('Renderer:', renderer);
-  console.log('Camera:', camera);
 };
 
 // === DEBUG LOGGER CLASS ===
@@ -100,12 +102,12 @@ class DebugLogger {
 // === INITIALIZE ===
 function init() {
   console.log('=== INIT CALLED ===');
+  console.log('Current location:', window.location.href);
   
   debugLogger = new DebugLogger();
   debugLogger.log('info', '🚀 AR Back Wings Starting...');
+  debugLogger.log('info', `Current URL: ${window.location.pathname}`);
   debugLogger.log('info', `Test Mode: ${TEST_MODE ? 'ENABLED' : 'DISABLED'}`);
-  debugLogger.log('info', `Camera: ${CAMERA_MODE}`);
-  debugLogger.log('info', `PLY: ${USE_PLY_MODEL ? 'ENABLED' : 'DISABLED'}`);
 
   // Check libraries
   if (typeof THREE === 'undefined') {
@@ -117,10 +119,10 @@ function init() {
 
   if (typeof THREE.PLYLoader === 'undefined') {
     debugLogger.log('error', '❌ PLYLoader NOT loaded!');
-    alert('PLYLoader failed to load!');
-    return;
+    debugLogger.log('info', 'Trying to create PLYLoader anyway...');
+  } else {
+    debugLogger.log('success', '✅ PLYLoader available');
   }
-  debugLogger.log('success', '✅ PLYLoader available');
 
   if (typeof tf === 'undefined') {
     debugLogger.log('error', '❌ TensorFlow NOT loaded!');
@@ -144,8 +146,6 @@ function init() {
     return;
   }
 
-  debugLogger.log('info', '🔘 Setting up button listener...');
-  
   startBtn.addEventListener('click', async () => {
     debugLogger.log('success', '🎯 START BUTTON CLICKED!');
     instructions.classList.add('hidden');
@@ -160,7 +160,6 @@ function init() {
 
   debugLogger.updateStatus('Ready - Tap Start');
   debugLogger.log('success', '✅ Init complete. Click Start!');
-  debugLogger.log('info', 'Type window.debugWings() for debug info');
 }
 
 // === START AR ===
@@ -170,15 +169,9 @@ async function startAR() {
   try {
     debugLogger.updateStatus('Checking camera...');
 
-    if (!navigator.mediaDevices) {
-      throw new Error('navigator.mediaDevices not available');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Camera API not available');
     }
-
-    if (!navigator.mediaDevices.getUserMedia) {
-      throw new Error('getUserMedia not available');
-    }
-
-    debugLogger.log('success', '✅ Camera API available');
 
     canvas = document.getElementById('output-canvas');
     ctx = canvas.getContext('2d');
@@ -202,7 +195,7 @@ async function startAR() {
     await new Promise((resolve) => {
       video.onloadedmetadata = () => {
         video.play();
-        debugLogger.log('success', `✅ Video playing: ${video.videoWidth}x${video.videoHeight}`);
+        debugLogger.log('success', `✅ Video: ${video.videoWidth}x${video.videoHeight}`);
         resolve();
       };
     });
@@ -244,6 +237,55 @@ async function startAR() {
   }
 }
 
+// === TRY LOADING PLY FROM MULTIPLE PATHS ===
+async function tryLoadPLY(loader) {
+  debugLogger.log('info', `🔍 Trying ${PLY_PATHS.length} different paths...`);
+  
+  for (let i = 0; i < PLY_PATHS.length; i++) {
+    const path = PLY_PATHS[i];
+    debugLogger.log('info', `Attempt ${i + 1}: ${path}`);
+    
+    try {
+      const geometry = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Timeout after 5s'));
+        }, 5000);
+
+        loader.load(
+          path,
+          (geo) => {
+            clearTimeout(timeout);
+            debugLogger.log('success', `✅ SUCCESS with path: ${path}`);
+            resolve(geo);
+          },
+          (xhr) => {
+            if (xhr.lengthComputable) {
+              const percent = (xhr.loaded / xhr.total * 100).toFixed(0);
+              debugLogger.log('info', `  Loading: ${percent}%`);
+            }
+          },
+          (err) => {
+            clearTimeout(timeout);
+            debugLogger.log('warning', `  ❌ Failed: ${err.message || err}`);
+            reject(err);
+          }
+        );
+      });
+
+      // If we get here, it worked!
+      debugLogger.log('success', `🎉 PLY loaded from: ${path}`);
+      return geometry;
+
+    } catch (err) {
+      debugLogger.log('warning', `Path ${i + 1} failed: ${err.message}`);
+      continue;
+    }
+  }
+
+  // None worked
+  throw new Error(`PLY not found in any of ${PLY_PATHS.length} paths. Check file exists in assets/ folder.`);
+}
+
 // === SETUP THREE.JS ===
 async function setupThreeJS() {
   debugLogger.log('info', '🎨 Setting up Three.js...');
@@ -257,39 +299,24 @@ async function setupThreeJS() {
   debugLogger.log('success', `Renderer: ${canvas.width}x${canvas.height}`);
 
   scene = new THREE.Scene();
-  debugLogger.log('success', 'Scene created');
-
   camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000);
   camera.position.set(0, 0, 0);
-  debugLogger.log('success', 'Camera created at (0,0,0)');
+  debugLogger.log('success', 'Scene & Camera created');
 
   if (USE_PLY_MODEL) {
-    debugLogger.log('info', `📦 Loading PLY: ${PLY_PATH_WINGS}`);
+    debugLogger.log('info', '📦 Attempting to load PLY...');
     debugLogger.updateAssetStatus('Loading PLY...');
 
     try {
       const loader = new THREE.PLYLoader();
       debugLogger.log('info', '✓ PLYLoader instantiated');
 
-      const geometry = await new Promise((resolve, reject) => {
-        loader.load(
-          PLY_PATH_WINGS,
-          (geo) => {
-            debugLogger.log('success', `✅ PLY loaded! ${geo.attributes.position.count} vertices`);
-            resolve(geo);
-          },
-          (xhr) => {
-            if (xhr.lengthComputable) {
-              const percent = (xhr.loaded / xhr.total * 100).toFixed(0);
-              debugLogger.log('info', `Loading: ${percent}%`);
-            }
-          },
-          (err) => {
-            debugLogger.log('error', `Load error: ${err}`);
-            reject(err);
-          }
-        );
-      });
+      // Try multiple paths
+      const geometry = await tryLoadPLY(loader);
+
+      debugLogger.log('success', `✅ Vertices: ${geometry.attributes.position.count}`);
+      debugLogger.log('info', `Has colors: ${geometry.attributes.color ? 'YES' : 'NO'}`);
+      debugLogger.log('info', `Has normals: ${geometry.attributes.normal ? 'YES' : 'NO'}`);
 
       geometry.center();
       geometry.computeBoundingBox();
@@ -304,7 +331,12 @@ async function setupThreeJS() {
 
       debugLogger.log('success', `📦 Size: (${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)})`);
 
-      // Create point cloud material
+      // Calculate recommended scale
+      const avgSize = (size.x + size.y + size.z) / 3;
+      const recommendedScale = 0.4 / avgSize;
+      debugLogger.log('info', `💡 Recommended scale: ${recommendedScale.toFixed(6)}`);
+
+      // Create material
       const material = new THREE.PointsMaterial({
         size: 0.05,
         vertexColors: geometry.attributes.color ? true : false,
@@ -320,7 +352,7 @@ async function setupThreeJS() {
         wingsMesh.position.set(0, 0, -3);
         wingsMesh.scale.set(1, 1, 1);
         wingsMesh.visible = true;
-        debugLogger.log('warning', '🧪 TEST: Wings at (0,0,-3)');
+        debugLogger.log('warning', '🧪 TEST MODE: Wings at (0,0,-3) scale=1');
       } else {
         wingsMesh.visible = false;
       }
@@ -335,7 +367,12 @@ async function setupThreeJS() {
       debugLogger.updateAssetStatus('PLY loaded ✓');
 
     } catch (err) {
-      debugLogger.log('error', `PLY failed: ${err.message}`);
+      debugLogger.log('error', `❌ PLY FAILED: ${err.message}`);
+      debugLogger.log('error', 'Please check:');
+      debugLogger.log('error', '1. File exists at ./assets/wings.ply');
+      debugLogger.log('error', '2. File is a valid PLY file');
+      debugLogger.log('error', '3. Server allows loading .ply files');
+      debugLogger.log('warning', '⚠️ Using box placeholders instead');
       createBoxWings();
     }
   } else {
@@ -367,7 +404,7 @@ function createBoxWings() {
   rightWing.visible = false;
 
   debugLogger.updateAssetStatus('Box placeholders');
-  debugLogger.log('success', '✅ Boxes created');
+  debugLogger.log('success', '✅ Boxes created (PLY failed to load)');
 }
 
 // === RENDER LOOP ===
@@ -484,7 +521,7 @@ function positionWings(wings, ls, rs, spine, depth, scale, angle) {
 
   wings.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
 
-  // Auto-scale based on bbox
+  // Auto-scale
   let scaleFactor;
   if (plyBoundingBoxSize) {
     const avg = (plyBoundingBoxSize.x + plyBoundingBoxSize.y + plyBoundingBoxSize.z) / 3;
