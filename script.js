@@ -466,7 +466,7 @@ function positionWingsOnBack(wings, leftShoulder, rightShoulder, spineCenter, de
   wings.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
   
   // Scale for point cloud - adjust based on your model size
-  wings.scale.set(scale * 0.01, scale * 0.01, scale * 0.01);
+  wings.scale.set(scale * 0.1, scale * 0.1, scale * 0.1);
 
   const baseRotX = -0.2;
   const baseRotY = 0;
