@@ -208,6 +208,22 @@ function init() {
     await startAR();
   });
 
+  // Add test button
+const testBtn = document.getElementById('test-splat-btn');
+if (testBtn) {
+  testBtn.addEventListener('click', () => {
+    if (wingsMesh) {
+      wingsMesh.position.set(0, 0, -3);
+      wingsMesh.scale.set(1, 1, 1);
+      wingsMesh.rotation.set(0, 0, 0);
+      wingsMesh.visible = true;
+      debugLogger.log('success', '🧪 Test: Splat forced visible at (0,0,-3)');
+    } else {
+      debugLogger.log('error', 'No splat mesh loaded yet');
+    }
+  });
+}
+
   debugLogger.updateStatus('Ready');
   debugLogger.log('success', '✅ Ready to start');
 }
