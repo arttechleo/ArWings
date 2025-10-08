@@ -8,12 +8,9 @@
   <title>AR Back Wings</title>
   <link rel="stylesheet" href="style.css">
 
-  <!-- Load Three.js first (non-module) -->
+  <!-- Three.js -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
   
-  <!-- PLYLoader -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/PLYLoader.js"></script>
-
   <!-- TensorFlow.js + Pose Detection -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.0.0"></script>
@@ -42,14 +39,13 @@
         <div><strong>Camera:</strong> <span id="video-status">Not started</span></div>
         <div><strong>Model:</strong> <span id="model-status">Not loaded</span></div>
         <div><strong>Shoulders:</strong> <span id="pose-status">Not detected</span></div>
-        <div><strong>Asset:</strong> <span id="asset-status">Box placeholders</span></div>
+        <div><strong>Asset:</strong> <span id="asset-status">Loading splat...</span></div>
         <div><strong>FPS:</strong> <span id="fps-counter">0</span></div>
       </div>
       <div id="debug-logs"></div>
     </div>
   </div>
 
-  <!-- Load script as regular script, not module -->
   <script src="script.js"></script>
 </body>
 </html>
