@@ -1,4 +1,6 @@
 // Gaussian Splatting loader - inline implementation
+// NOTE: This is a very basic parser and may not work for all .ply files.
+// It assumes a simple structure and does not parse all Gaussian Splat attributes.
 class GaussianSplatLoader {
   constructor() {
     this.splatData = null;
@@ -43,7 +45,7 @@ class GaussianSplatLoader {
     
     // Parse as simple point cloud for now
     const dataView = new DataView(buffer, headerEnd);
-    const vertexSize = 24; // Assuming x, y, z as floats + colors
+    const vertexSize = 24; // Assuming x, y, z as floats + colors. THIS IS A GUESS.
     
     const positions = new Float32Array(vertexCount * 3);
     const colors = new Float32Array(vertexCount * 3);
@@ -209,20 +211,20 @@ function init() {
   });
 
   // Add test button
-const testBtn = document.getElementById('test-splat-btn');
-if (testBtn) {
-  testBtn.addEventListener('click', () => {
-    if (wingsMesh) {
-      wingsMesh.position.set(0, 0, -3);
-      wingsMesh.scale.set(1, 1, 1);
-      wingsMesh.rotation.set(0, 0, 0);
-      wingsMesh.visible = true;
-      debugLogger.log('success', '🧪 Test: Splat forced visible at (0,0,-3)');
-    } else {
-      debugLogger.log('error', 'No splat mesh loaded yet');
-    }
-  });
-}
+  const testBtn = document.getElementById('test-splat-btn');
+  if (testBtn) {
+    testBtn.addEventListener('click', () => {
+      if (wingsMesh) {
+        wingsMesh.position.set(0, 0, -3);
+        wingsMesh.scale.set(1, 1, 1);
+        wingsMesh.rotation.set(0, 0, 0);
+        wingsMesh.visible = true;
+        debugLogger.log('success', '🧪 Test: Splat forced visible at (0,0,-3)');
+      } else {
+        debugLogger.log('error', 'No splat mesh loaded yet');
+      }
+    });
+  }
 
   debugLogger.updateStatus('Ready');
   debugLogger.log('success', '✅ Ready to start');
@@ -311,7 +313,6 @@ async function setupThreeJS() {
       const vertexCount = geometry.attributes.position.count;
       debugLogger.log('success', `✅ Splat loaded: ${vertexCount} points`);
 
-      // Compute bounding box properly
       geometry.computeBoundingBox();
       const bbox = geometry.boundingBox;
       
@@ -323,7 +324,6 @@ async function setupThreeJS() {
       const size = new THREE.Vector3();
       bbox.getSize(size);
       
-      // Validate bounding box
       if (isNaN(size.x) || isNaN(size.y) || isNaN(size.z)) {
         debugLogger.log('error', `Invalid bbox size: ${size.x}, ${size.y}, ${size.z}`);
         debugLogger.log('warning', 'Setting default bbox size');
@@ -336,13 +336,12 @@ async function setupThreeJS() {
       debugLogger.log('success', `📦 Bbox: Max(${bbox.max.x.toFixed(2)}, ${bbox.max.y.toFixed(2)}, ${bbox.max.z.toFixed(2)})`);
       debugLogger.log('success', `📦 Size: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)}`);
 
-      // Create splat material with better visibility
       const material = new THREE.PointsMaterial({
-        size: 0.04,  // Larger points
+        size: 0.04,
         vertexColors: true,
         sizeAttenuation: true,
         transparent: true,
-        opacity: 0.9,  // More opaque
+        opacity: 0.9,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         depthTest: true
@@ -496,77 +495,76 @@ async function renderLoop() {
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION SPLAT ===
+// === POSITION SPLAT (REVISED) ===
+// This version correctly converts 2D screen coordinates to 3D world space.
+// The key is using vector.unproject(camera) to translate the point from the
+// screen into the 3D scene at the correct depth.
 function positionSplat(splat, ls, rs, spine, depth, scale, angle) {
-  if (!splat) {
-    debugLogger.log('error', 'positionSplat: splat is null');
-    return;
-  }
-
-  // Convert screen coordinates to normalized device coordinates (-1 to 1)
-  let spineX = (spine.x / video.videoWidth) * 2 - 1;
-  let spineY = -(spine.y / video.videoHeight) * 2 + 1;
-
-  if (CAMERA_MODE === 'user') spineX = -spineX;
-
-  const downwardShift = 0.1 * scale;
-  
-  const targetX = spineX;
-  const targetY = spineY - downwardShift;
-  const targetZ = depth - (0.3 * scale);
-
-  // Smooth position
-  smoothedWingsPos.x += (targetX - smoothedWingsPos.x) * SMOOTHING_FACTOR;
-  smoothedWingsPos.y += (targetY - smoothedWingsPos.y) * SMOOTHING_FACTOR;
-  smoothedWingsPos.z += (targetZ - smoothedWingsPos.z) * SMOOTHING_FACTOR;
-
-  splat.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
-
-  // FIXED: Calculate scale properly
-  let scaleFactor;
-  
-  if (splatBoundingBoxSize && 
-      !isNaN(splatBoundingBoxSize.x) && 
-      !isNaN(splatBoundingBoxSize.y) && 
-      !isNaN(splatBoundingBoxSize.z)) {
-    
-    const avg = (splatBoundingBoxSize.x + splatBoundingBoxSize.y + splatBoundingBoxSize.z) / 3;
-    
-    if (avg > 0 && !isNaN(avg)) {
-      // Target size: make wings about 0.6 units wide
-      scaleFactor = (0.6 / avg) * scale;
-      debugLogger.log('info', `Scale calc: bbox_avg=${avg.toFixed(2)}, scale=${scale.toFixed(2)}, result=${scaleFactor.toFixed(4)}`);
-    } else {
-      scaleFactor = scale * 0.5;
-      debugLogger.log('warning', 'Bbox average invalid, using fallback scale');
+    if (!splat) {
+        debugLogger.log('error', 'positionSplat: splat is null');
+        return;
     }
-  } else {
-    // Fallback if bounding box is invalid
-    scaleFactor = scale * 0.5;
-    debugLogger.log('warning', 'No valid bounding box, using fallback scale');
-  }
 
-  // Safety check
-  if (isNaN(scaleFactor) || scaleFactor <= 0) {
-    scaleFactor = 1.0;
-    debugLogger.log('error', 'Scale is NaN or invalid, using 1.0');
-  }
+    // 1. Convert screen coordinates to Normalized Device Coordinates (-1 to +1)
+    let spineX = (spine.x / video.videoWidth) * 2 - 1;
+    let spineY = -(spine.y / video.videoHeight) * 2 + 1;
 
-  splat.scale.set(scaleFactor, scaleFactor, scaleFactor);
+    if (CAMERA_MODE === 'user') {
+        spineX = -spineX;
+    }
 
-  // Rotation to match body angle
-  const bodyRot = CAMERA_MODE === 'user' ? -angle : angle;
-  
-  const targetRotX = -0.2; // Slight forward tilt
-  const targetRotY = bodyRot * 0.5;
-  const targetRotZ = bodyRot * 0.2;
+    // 2. Create a 3D vector and "unproject" it into the world
+    // This is the CRUCIAL FIX. We project the 2D point into 3D space.
+    const worldPosition = new THREE.Vector3(spineX, spineY, 0.5);
+    worldPosition.unproject(camera);
 
-  smoothedWingsRot.x += (targetRotX - smoothedWingsRot.x) * SMOOTHING_FACTOR;
-  smoothedWingsRot.y += (targetRotY - smoothedWingsRot.y) * SMOOTHING_FACTOR;
-  smoothedWingsRot.z += (targetRotZ - smoothedWingsRot.z) * SMOOTHING_FACTOR;
+    // We get the direction from the camera to this point and scale it by depth
+    const dir = worldPosition.sub(camera.position).normalize();
+    const distance = Math.abs(depth / dir.z); // Adjust distance based on depth
+    const targetPos = camera.position.clone().add(dir.multiplyScalar(distance));
+    
+    // Apply a slight downward shift relative to the user
+    const downwardShift = 0.1 * scale;
+    targetPos.y -= downwardShift;
 
-  splat.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
+    // 3. Smooth the final position
+    smoothedWingsPos.x += (targetPos.x - smoothedWingsPos.x) * SMOOTHING_FACTOR;
+    smoothedWingsPos.y += (targetPos.y - smoothedWingsPos.y) * SMOOTHING_FACTOR;
+    smoothedWingsPos.z += (targetPos.z - smoothedWingsPos.z) * SMOOTHING_FACTOR;
+
+    splat.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
+
+    // --- The rest of your scaling and rotation logic can remain the same ---
+    let scaleFactor;
+    if (splatBoundingBoxSize && !isNaN(splatBoundingBoxSize.x)) {
+        const avg = (splatBoundingBoxSize.x + splatBoundingBoxSize.y + splatBoundingBoxSize.z) / 3;
+        if (avg > 0) {
+            // Target size: make wings about 1.5 world units wide relative to the user
+            scaleFactor = (1.5 / avg) * scale;
+        } else {
+            scaleFactor = scale * 0.5; // Fallback
+        }
+    } else {
+        scaleFactor = scale * 0.5; // Fallback
+    }
+    
+    if (isNaN(scaleFactor) || scaleFactor <= 0) {
+        scaleFactor = 1.0; 
+    }
+    splat.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+    // Rotation
+    const bodyRot = CAMERA_MODE === 'user' ? -angle : angle;
+    const targetRotX = -0.2; 
+    const targetRotY = bodyRot * 0.5;
+    const targetRotZ = bodyRot * 0.2;
+
+    smoothedWingsRot.x += (targetRotX - smoothedWingsRot.x) * SMOOTHING_FACTOR;
+    smoothedWingsRot.y += (targetRotY - smoothedWingsRot.y) * SMOOTHING_FACTOR;
+    smoothedWingsRot.z += (targetRotZ - smoothedWingsRot.z) * SMOOTHING_FACTOR;
+    splat.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
 }
+
 
 // === POSITION BOX ===
 function positionBox(wing, shoulder, spine, depth, scale, angle, side) {
