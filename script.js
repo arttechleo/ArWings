@@ -1,11 +1,14 @@
-// STEP 1: Import everything as modules. No more global variables!
+// Import the libraries defined in our importmap
 import * as THREE from 'three';
 import { SplatLoader } from 'three-gaussian-splat';
 import * as tf from '@tensorflow/tfjs';
 import * as poseDetection from '@tensorflow-models/pose-detection';
 
+//
+// Your old GaussianSplatLoader class has been completely removed.
+//
 
-// --- Main App Variables (largely the same) ---
+// Main app variables
 let scene, camera, renderer;
 let video, canvas, ctx;
 let poseModel;
@@ -13,16 +16,16 @@ let debugLogger;
 let isRunning = false;
 let frameCount = 0;
 let lastFpsUpdate = Date.now();
-let wingsMesh = null; // This will now be a SplatMesh object
-let splatLoaded = false;
-let splatBoundingBoxSize = null;
 let smoothedWingsPos = { x: 0, y: 0, z: 0 };
 let smoothedWingsRot = { x: 0, y: 0, z: 0 };
 const SMOOTHING_FACTOR = 0.4;
-const CAMERA_MODE = 'environment';
+let wingsMesh = null; // This will now hold the high-quality SplatMesh
+let splatLoaded = false;
+let splatBoundingBoxSize = null;
 
-// The path to your asset. The new loader can handle .ply, .splat, or .spz
-const SPLAT_PATH = 'assets/wings.ply'; // Or 'assets/wings.spz'
+// Configuration
+const SPLAT_PATH = 'assets/wings.ply'; // The new loader handles .ply, .splat, and .spz
+const CAMERA_MODE = 'environment';
 
 
 // === The DebugLogger Class remains unchanged ===
@@ -103,7 +106,7 @@ async function startAR() {
     }
 }
 
-// === SETUP THREE.JS (Now using the new library) ===
+// === SETUP THREE.JS (Refactored) ===
 async function setupThreeJS() {
     debugLogger.log('info', '🎨 Setting up Three.js scene...');
     renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
@@ -113,19 +116,21 @@ async function setupThreeJS() {
     camera.position.set(0, 0, 0);
 
     debugLogger.log('info', `🌟 Loading Gaussian Splat from: ${SPLAT_PATH}`);
+    debugLogger.updateStatus('asset', 'Loading splat...');
     try {
-        // STEP 2: Use the new, powerful SplatLoader
+        // Use the new, powerful SplatLoader from the library
         const loader = new SplatLoader();
         wingsMesh = await loader.load(SPLAT_PATH); // The loader returns a complete SplatMesh
 
-        // The library handles computing the bounding box internally.
-        // We can get it like this if we need it.
+        // Get the bounding box for our scaling calculations
         const bbox = new THREE.Box3().setFromObject(wingsMesh);
         const size = new THREE.Vector3();
         bbox.getSize(size);
         splatBoundingBoxSize = size;
+
         debugLogger.log('success', `✅ Splat loaded successfully!`);
         debugLogger.log('info', `📦 Bounding Box Size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`);
+        debugLogger.updateStatus('asset', '✅ Splat loaded');
 
         wingsMesh.visible = false;
         scene.add(wingsMesh);
@@ -133,10 +138,11 @@ async function setupThreeJS() {
 
     } catch (err) {
         debugLogger.log('error', `❌ Splat loading failed: ${err.message}`);
+        debugLogger.updateStatus('asset', '❌ Load failed');
     }
 }
 
-// === RENDER LOOP (The core logic is the same) ===
+// === RENDER LOOP (Unchanged) ===
 async function renderLoop() {
     if (!isRunning) return;
     requestAnimationFrame(renderLoop);
@@ -179,9 +185,10 @@ async function renderLoop() {
     ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION SPLAT (This function remains unchanged) ===
+// === POSITION SPLAT (Unchanged - it works perfectly with the new SplatMesh object) ===
 function positionSplat(splat, spine, depth, scale, angle, shoulderDist) {
     if (!splat) return;
+    // Anchor wings to the upper back
     spine.y += shoulderDist * 0.15;
     let spineX = (spine.x / video.videoWidth) * 2 - 1;
     let spineY = -(spine.y / video.videoHeight) * 2 + 1;
