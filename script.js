@@ -7,6 +7,9 @@ let isRunning = false;
 let frameCount = 0;
 let lastFpsUpdate = Date.now();
 
+// Camera configuration - change 'user' to 'environment' for rear camera
+const CAMERA_MODE = 'user'; // 'user' = front camera, 'environment' = rear camera
+
 // === DEBUG LOGGER CLASS ===
 class DebugLogger {
   constructor() {
@@ -77,6 +80,7 @@ class DebugLogger {
 function init() {
   debugLogger = new DebugLogger();
   debugLogger.log('info', '=== AR Back Wings Starting ===');
+  debugLogger.log('info', `Camera Mode: ${CAMERA_MODE === 'user' ? 'Front (Selfie)' : 'Rear'}`);
   
   // Check if THREE is loaded
   if (typeof THREE === 'undefined') {
@@ -138,12 +142,12 @@ async function startAR() {
     // Setup video
     video = document.getElementById('video');
     debugLogger.updateStatus('Requesting camera...');
-    debugLogger.log('info', 'Requesting front-facing camera');
+    debugLogger.log('info', `Requesting ${CAMERA_MODE === 'user' ? 'front-facing' : 'rear-facing'} camera`);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: 'user', // Front camera (selfie mode)
+          facingMode: CAMERA_MODE,
           width: { ideal: 1280 },
           height: { ideal: 720 }
         },
@@ -223,8 +227,8 @@ function setupThreeJS() {
   );
   camera.position.set(0, 0, 0);
 
-  // Create wing cubes
-  const wingGeometry = new THREE.BoxGeometry(0.2, 0.4, 0.1);
+  // Create wing cubes with better proportions for wings
+  const wingGeometry = new THREE.BoxGeometry(0.15, 0.35, 0.08);
   const wingMaterial = new THREE.MeshBasicMaterial({
     color: 0x00ff88,
     transparent: true,
@@ -244,7 +248,7 @@ function setupThreeJS() {
   debugLogger.log('success', 'Wing cubes created');
 }
 
-// === MAIN RENDER LOOP ===
+// === MAIN RENDER LOOP (Enhanced with better back detection) ===
 async function renderLoop() {
   if (!isRunning) return;
 
@@ -262,8 +266,10 @@ async function renderLoop() {
 
   // Draw video frame to canvas
   ctx.save();
-  ctx.scale(-1, 1); // Mirror the video
-  ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+  if (CAMERA_MODE === 'user') {
+    ctx.scale(-1, 1); // Mirror the video for front camera
+  }
+  ctx.drawImage(video, CAMERA_MODE === 'user' ? -canvas.width : 0, 0, canvas.width, canvas.height);
   ctx.restore();
 
   // Run pose detection
@@ -275,11 +281,13 @@ async function renderLoop() {
         const keypoints = poses[0].keypoints;
         const leftShoulder = keypoints.find(kp => kp.name === 'left_shoulder');
         const rightShoulder = keypoints.find(kp => kp.name === 'right_shoulder');
+        const leftHip = keypoints.find(kp => kp.name === 'left_hip');
+        const rightHip = keypoints.find(kp => kp.name === 'right_hip');
 
         if (leftShoulder && rightShoulder &&
             leftShoulder.score > 0.3 && rightShoulder.score > 0.3) {
 
-          // Calculate positions
+          // Calculate shoulder distance for scale
           const shoulderDist = Math.hypot(
             rightShoulder.x - leftShoulder.x,
             rightShoulder.y - leftShoulder.y
@@ -288,9 +296,29 @@ async function renderLoop() {
           const depth = -2.0 - (150 / shoulderDist);
           const scale = Math.max(0.5, shoulderDist / 150);
 
-          // Position wings (mirrored for front camera)
-          positionWing(leftWing, rightShoulder, depth, scale, 'left');
-          positionWing(rightWing, leftShoulder, depth, scale, 'right');
+          // Calculate spine center for better back positioning
+          let spineCenter = {
+            x: (leftShoulder.x + rightShoulder.x) / 2,
+            y: (leftShoulder.y + rightShoulder.y) / 2
+          };
+
+          // If hips are visible, use torso center
+          if (leftHip && rightHip && leftHip.score > 0.2 && rightHip.score > 0.2) {
+            const hipCenterX = (leftHip.x + rightHip.x) / 2;
+            const hipCenterY = (leftHip.y + rightHip.y) / 2;
+            spineCenter.y = (spineCenter.y + hipCenterY) / 2; // Mid-torso
+          }
+
+          // Position wings on back shoulder blades
+          if (CAMERA_MODE === 'user') {
+            // Mirrored for front camera
+            positionWingOnBack(leftWing, rightShoulder, spineCenter, depth, scale, 'left');
+            positionWingOnBack(rightWing, leftShoulder, spineCenter, depth, scale, 'right');
+          } else {
+            // Normal for rear camera
+            positionWingOnBack(leftWing, leftShoulder, spineCenter, depth, scale, 'left');
+            positionWingOnBack(rightWing, rightShoulder, spineCenter, depth, scale, 'right');
+          }
 
           leftWing.visible = true;
           rightWing.visible = true;
@@ -298,7 +326,9 @@ async function renderLoop() {
           debugLogger.updatePoseStatus(`Detected (${leftShoulder.score.toFixed(2)})`);
 
           // Draw debug points on canvas
-          drawDebugPoints(ctx, [leftShoulder, rightShoulder]);
+          const debugPoints = [leftShoulder, rightShoulder];
+          if (leftHip && rightHip) debugPoints.push(leftHip, rightHip);
+          drawDebugPoints(ctx, debugPoints);
         } else {
           leftWing.visible = false;
           rightWing.visible = false;
@@ -319,22 +349,48 @@ async function renderLoop() {
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION WING ===
-function positionWing(wing, shoulder, depth, scale, side) {
-  // Convert to normalized coordinates (mirrored)
-  const x = (shoulder.x / video.videoWidth) * 2 - 1;
-  const y = -(shoulder.y / video.videoHeight) * 2 + 1;
+// === POSITION WING ON BACK SHOULDER BLADES ===
+function positionWingOnBack(wing, shoulder, spineCenter, depth, scale, side) {
+  // Convert shoulder to normalized coordinates
+  let shoulderX = (shoulder.x / video.videoWidth) * 2 - 1;
+  let shoulderY = -(shoulder.y / video.videoHeight) * 2 + 1;
 
-  // Offset for back positioning
-  const offsetX = side === 'left' ? 0.15 * scale : -0.15 * scale;
-  const offsetY = -0.1 * scale;
+  // Convert spine center to normalized coordinates
+  let spineCenterX = (spineCenter.x / video.videoWidth) * 2 - 1;
+  let spineCenterY = -(spineCenter.y / video.videoHeight) * 2 + 1;
 
-  wing.position.set(x + offsetX, y + offsetY, depth);
-  wing.scale.set(scale, scale, scale);
+  // Mirror coordinates for front camera
+  if (CAMERA_MODE === 'user') {
+    shoulderX = -shoulderX;
+    spineCenterX = -spineCenterX;
+  }
 
-  // Rotate wings
-  const rotY = side === 'left' ? 0.4 : -0.4;
-  wing.rotation.set(0, rotY, 0);
+  // Calculate vector from spine to shoulder
+  const dx = shoulderX - spineCenterX;
+  const dy = shoulderY - spineCenterY;
+
+  // Position wing on shoulder blade:
+  // - Start at shoulder
+  // - Move inward toward spine (30%)
+  // - Move down toward mid-back
+  const inwardOffset = 0.3; // How much to move toward spine
+  const downwardOffset = 0.2; // How much to move down
+
+  const wingX = shoulderX - (dx * inwardOffset);
+  const wingY = shoulderY - (Math.abs(dy) * downwardOffset) - (0.1 * scale);
+
+  // Depth offset to place wings behind the body
+  const depthOffset = -0.4 * scale;
+
+  wing.position.set(wingX, wingY, depth + depthOffset);
+  wing.scale.set(scale * 0.8, scale * 1.2, scale * 0.6); // Make wings taller
+
+  // Rotate wings to angle backward and outward
+  const rotY = side === 'left' ? 0.6 : -0.6; // Angle outward from spine
+  const rotX = -0.3; // Tilt backward
+  const rotZ = side === 'left' ? -0.15 : 0.15; // Slight roll
+  
+  wing.rotation.set(rotX, rotY, rotZ);
 }
 
 // === DRAW DEBUG POINTS ===
@@ -342,8 +398,14 @@ function drawDebugPoints(ctx, keypoints) {
   ctx.fillStyle = '#00ff88';
   keypoints.forEach(kp => {
     if (kp.score > 0.3) {
-      const x = canvas.width - kp.x; // Mirror x coordinate
+      let x = kp.x;
       const y = kp.y;
+      
+      // Mirror x coordinate for front camera
+      if (CAMERA_MODE === 'user') {
+        x = canvas.width - x;
+      }
+      
       ctx.beginPath();
       ctx.arc(x, y, 5, 0, Math.PI * 2);
       ctx.fill();
