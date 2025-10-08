@@ -13,13 +13,9 @@
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.0.0"></script>
 </head>
 <body>
-  <!-- Canvas for AR overlay -->
   <canvas id="output-canvas"></canvas>
-  
-  <!-- Hidden video element -->
   <video id="video" autoplay playsinline></video>
 
-  <!-- Instructions overlay -->
   <div id="instructions">
     <div id="instructions-content">
       <h2>📱 AR Back Wings</h2>
@@ -28,7 +24,6 @@
     </div>
   </div>
 
-  <!-- Debug Panel -->
   <div id="debug-panel">
     <div id="debug-header">
       <h3>Debug</h3>
@@ -53,7 +48,8 @@
     {
       "imports": {
         "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+        "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.5.0/build/gaussian-splats-3d.module.js"
       }
     }
   </script>
