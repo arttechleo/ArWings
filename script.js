@@ -8,6 +8,10 @@ let frameCount = 0;
 let lastFpsUpdate = Date.now();
 
 // Smoothing variables for stable positioning
+let smoothedLeftPos = { x: 0, y: 0, z: 0 };
+let smoothedRightPos = { x: 0, y: 0, z: 0 };
+let smoothedLeftRot = { x: 0, y: 0, z: 0 };
+let smoothedRightRot = { x: 0, y: 0, z: 0 };
 let smoothedWingsPos = { x: 0, y: 0, z: 0 };
 let smoothedWingsRot = { x: 0, y: 0, z: 0 };
 const SMOOTHING_FACTOR = 0.4;
@@ -248,14 +252,20 @@ async function setupThreeJS() {
       const wingsGeometry = await new Promise((resolve, reject) => {
         loader.load(
           PLY_PATH_WINGS,
-          (geometry) => resolve(geometry),
+          (geometry) => {
+            debugLogger.log('success', 'PLY file loaded successfully');
+            resolve(geometry);
+          },
           (progress) => {
             if (progress.total > 0) {
               const percent = (progress.loaded / progress.total * 100).toFixed(0);
               debugLogger.log('info', `Loading wings: ${percent}%`);
             }
           },
-          (error) => reject(error)
+          (error) => {
+            debugLogger.log('error', `PLY loader error: ${error}`);
+            reject(new Error(`PLY load failed: ${error}`));
+          }
         );
       });
       
@@ -294,10 +304,11 @@ async function setupThreeJS() {
     } catch (err) {
       debugLogger.log('error', `Failed to load PLY model: ${err.message}`);
       debugLogger.log('info', 'Falling back to box placeholders');
+      wingsPlyMesh = null; // Ensure it's explicitly null
       createBoxWings();
     }
   } else {
-    // Create box placeholders
+    debugLogger.log('info', 'Using box placeholders (PLY disabled or unavailable)');
     createBoxWings();
   }
 
@@ -392,10 +403,11 @@ async function renderLoop() {
             rightShoulder.x - leftShoulder.x
           );
 
-          // Position combined wings on back
-          if (USE_PLY_MODEL) {
+          // SAFETY CHECK: Position based on which wings are loaded
+          if (USE_PLY_MODEL && wingsPlyMesh) {
             positionCombinedWingsOnBack(wingsPlyMesh, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle);
-          } else {
+            wingsPlyMesh.visible = true;
+          } else if (leftWing && rightWing) {
             // Position separate box wings
             if (CAMERA_MODE === 'user') {
               positionWingGluedToBack(leftWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
@@ -404,11 +416,6 @@ async function renderLoop() {
               positionWingGluedToBack(leftWing, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
               positionWingGluedToBack(rightWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'right');
             }
-          }
-
-          if (USE_PLY_MODEL) {
-            wingsPlyMesh.visible = true;
-          } else {
             leftWing.visible = true;
             rightWing.visible = true;
           }
@@ -419,22 +426,16 @@ async function renderLoop() {
           if (leftHip && rightHip) debugPoints.push(leftHip, rightHip);
           drawDebugPoints(ctx, debugPoints);
         } else {
-          if (USE_PLY_MODEL) {
-            wingsPlyMesh.visible = false;
-          } else {
-            leftWing.visible = false;
-            rightWing.visible = false;
-          }
+          if (wingsPlyMesh) wingsPlyMesh.visible = false;
+          if (leftWing) leftWing.visible = false;
+          if (rightWing) rightWing.visible = false;
           debugLogger.updatePoseStatus('Low confidence');
           baseShoulderDistance = null;
         }
       } else {
-        if (USE_PLY_MODEL) {
-          wingsPlyMesh.visible = false;
-        } else {
-          leftWing.visible = false;
-          rightWing.visible = false;
-        }
+        if (wingsPlyMesh) wingsPlyMesh.visible = false;
+        if (leftWing) leftWing.visible = false;
+        if (rightWing) rightWing.visible = false;
         debugLogger.updatePoseStatus('No person detected');
         baseShoulderDistance = null;
       }
@@ -449,6 +450,12 @@ async function renderLoop() {
 
 // === POSITION COMBINED WINGS ON BACK (single mesh with both wings) ===
 function positionCombinedWingsOnBack(wings, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle) {
+  // Safety check
+  if (!wings) {
+    debugLogger.log('error', 'Wings mesh is null in positionCombinedWingsOnBack');
+    return;
+  }
+
   // Convert spine center to normalized coordinates
   let spineCenterX = (spineCenter.x / video.videoWidth) * 2 - 1;
   let spineCenterY = -(spineCenter.y / video.videoHeight) * 2 + 1;
@@ -495,6 +502,8 @@ function positionCombinedWingsOnBack(wings, leftShoulder, rightShoulder, spineCe
 
 // === POSITION WING GLUED TO BACK (for box placeholders) ===
 function positionWingGluedToBack(wing, thisShoulder, otherShoulder, spineCenter, depth, scale, shoulderAngle, currentShoulderDist, side) {
+  if (!wing) return; // Safety check
+  
   let shoulderX = (thisShoulder.x / video.videoWidth) * 2 - 1;
   let shoulderY = -(thisShoulder.y / video.videoHeight) * 2 + 1;
   
