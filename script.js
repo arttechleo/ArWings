@@ -24,7 +24,7 @@ let plyBoundingBoxSize = null;
 
 // Configuration
 const USE_PLY_MODEL = true;
-const PLY_PATH_WINGS = 'assets/wings.ply';
+const PLY_PATH_WINGS = './assets/wings.ply';
 const TEST_MODE = false; // Set true to see PLY without tracking
 const CAMERA_MODE = 'environment';
 
