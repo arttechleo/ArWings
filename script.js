@@ -7,11 +7,10 @@
 // === GAUSSIAN SPLAT LOADER (REVISED AND ROBUST) ===
 // This new loader correctly parses the PLY header to find the exact location of
 // position and color data, making it compatible with standard Gaussian Splat files.
+// === GAUSSIAN SPLAT LOADER (FINAL CORRECTED VERSION) ===
+// This version fixes a bug in the property search logic to correctly find
+// x, y, and z attributes from the PLY header.
 class GaussianSplatLoader {
-    constructor() {
-        // No splatData needed here anymore
-    }
-
     async load(url) {
         try {
             const response = await fetch(url);
@@ -26,22 +25,20 @@ class GaussianSplatLoader {
     }
 
     parsePLY(buffer) {
-        // Decode the header
         const headerText = new TextDecoder().decode(buffer.slice(0, 2048));
         const headerEndIndex = headerText.indexOf('end_header\n') + 11;
 
-        // Get the number of vertices
         const vertexCountMatch = headerText.match(/element vertex (\d+)/);
         if (!vertexCountMatch) throw new Error("Invalid PLY: Missing 'element vertex' count.");
         const vertexCount = parseInt(vertexCountMatch[1]);
 
-        // Parse all property lines to determine the vertex structure
         const propertyLines = headerText.slice(0, headerEndIndex).match(/property .+/g);
         if (!propertyLines) throw new Error("Invalid PLY: No properties found in header.");
 
+        // --- PROPERTY PARSING (Corrected Logic) ---
         let vertexStride = 0;
         const properties = [];
-        const typeSizeBytes = { 'float': 4, 'uchar': 1 };
+        const typeSizeBytes = { 'float': 4, 'double': 8, 'uchar': 1, 'int': 4 };
 
         for (const line of propertyLines) {
             const [, type, name] = line.split(' ');
@@ -50,89 +47,73 @@ class GaussianSplatLoader {
                 vertexStride += typeSizeBytes[type];
             }
         }
-        if (vertexStride === 0) throw new Error("Could not determine vertex stride from PLY properties.");
+        
+        // **[DEBUG TIP]** If errors persist, uncomment the next line to see your PLY structure.
+        // console.log("PLY Properties Found:", properties);
 
-        // Find the specific offsets for position and color
-        const attrs = {
-            pos: ['x', 'y', 'z'],
-            color: ['f_dc_0', 'f_dc_1', 'f_dc_2'], // Standard for GS
-            fallbackColor: ['red', 'green', 'blue'] // Fallback for simple point clouds
-        };
-
-        const findAttr = (names) => properties.find(p => names.includes(p.name));
+        // --- ATTRIBUTE OFFSET FINDING (Corrected Logic) ---
         const posOffsets = {
-            x: findAttr(attrs.pos)?.offset,
-            y: findAttr(attrs.pos, 1)?.offset,
-            z: findAttr(attrs.pos, 2)?.offset
+            x: properties.find(p => p.name === 'x')?.offset,
+            y: properties.find(p => p.name === 'y')?.offset,
+            z: properties.find(p => p.name === 'z')?.offset
         };
-        let colorOffsets = {
-            r: findAttr(attrs.color)?.offset,
-            g: findAttr(attrs.color, 1)?.offset,
-            b: findAttr(attrs.color, 2)?.offset
-        };
-        let isSphericalHarmonics = true;
 
-        // Check for fallback color attributes if standard GS attributes are not found
+        if (posOffsets.x === undefined || posOffsets.y === undefined || posOffsets.z === undefined) {
+            throw new Error("Invalid PLY: Could not find all position properties (x, y, z).");
+        }
+
+        let colorOffsets = {
+            r: properties.find(p => p.name === 'f_dc_0')?.offset,
+            g: properties.find(p => p.name === 'f_dc_1')?.offset,
+            b: properties.find(p => p.name === 'f_dc_2')?.offset
+        };
+        let isSphericalHarmonics = (properties.find(p => p.name === 'f_dc_0')?.type === 'float');
+        
         if (colorOffsets.r === undefined) {
             isSphericalHarmonics = false;
             colorOffsets = {
-                r: findAttr(attrs.fallbackColor)?.offset,
-                g: findAttr(attrs.fallbackColor, 1)?.offset,
-                b: findAttr(attrs.fallbackColor, 2)?.offset
+                r: properties.find(p => p.name === 'red')?.offset,
+                g: properties.find(p => p.name === 'green')?.offset,
+                b: properties.find(p => p.name === 'blue')?.offset
             };
         }
-        
-        if (posOffsets.x === undefined || posOffsets.y === undefined || posOffsets.z === undefined) {
-             throw new Error("Invalid PLY: Could not find all position properties (x, y, z).");
-        }
-        
-        // Create arrays for geometry
+
+        // --- DATA READING ---
         const positions = new Float32Array(vertexCount * 3);
         const colors = new Float32Array(vertexCount * 3);
         const dataView = new DataView(buffer, headerEndIndex);
-        const SH_C0 = 0.28209479177387814; // Constant for Spherical Harmonics conversion
+        const SH_C0 = 0.28209479177387814;
 
         for (let i = 0; i < vertexCount; i++) {
             const offset = i * vertexStride;
 
-            // Read position
             positions[i * 3 + 0] = dataView.getFloat32(offset + posOffsets.x, true);
             positions[i * 3 + 1] = dataView.getFloat32(offset + posOffsets.y, true);
             positions[i * 3 + 2] = dataView.getFloat32(offset + posOffsets.z, true);
 
-            // Read color
             if (colorOffsets.r !== undefined) {
                 if (isSphericalHarmonics) {
-                    // Convert from Spherical Harmonics to linear RGB
                     colors[i * 3 + 0] = 0.5 + SH_C0 * dataView.getFloat32(offset + colorOffsets.r, true);
                     colors[i * 3 + 1] = 0.5 + SH_C0 * dataView.getFloat32(offset + colorOffsets.g, true);
                     colors[i * 3 + 2] = 0.5 + SH_C0 * dataView.getFloat32(offset + colorOffsets.b, true);
                 } else {
-                    // Assume uchar for simple RGB
                     colors[i * 3 + 0] = dataView.getUint8(offset + colorOffsets.r) / 255.0;
                     colors[i * 3 + 1] = dataView.getUint8(offset + colorOffsets.g) / 255.0;
                     colors[i * 3 + 2] = dataView.getUint8(offset + colorOffsets.b) / 255.0;
                 }
             } else {
-                // Default to white if no color is found
                 colors.fill(1.0, i * 3, i * 3 + 3);
             }
         }
-        
-        // Create and return the Three.js geometry
+
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
         geometry.computeBoundingBox();
-        
-        // IMPORTANT: Do NOT center the geometry. The model's origin is likely
-        // the intended attachment point for the wings.
-        // geometry.center(); // This line is intentionally removed.
 
         return geometry;
     }
 }
-
 // Main app variables
 let scene, camera, renderer;
 let leftWing, rightWing;
