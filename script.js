@@ -1,6 +1,4 @@
-import * as THREE from 'three';
-import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
-
+// No imports - using global THREE from CDN
 let scene, camera, renderer;
 let leftWing, rightWing;
 let video, canvas, ctx;
@@ -20,32 +18,30 @@ let smoothedRightRot = { x: 0, y: 0, z: 0 };
 const SMOOTHING_FACTOR = 0.4;
 
 let baseShoulderDistance = null;
-
-// Gaussian Splat viewer and mesh
-let viewer = null;
-let splatMesh = null;
-let splatLoaded = false;
+let wingsMesh = null;
+let plyLoaded = false;
+let plyBoundingBoxSize = null;
 
 // Configuration
-const USE_GAUSSIAN_SPLAT = true; // TRUE Gaussian Splatting
-const SPLAT_PLY_PATH = 'assets/wings.ply'; // Your Gaussian Splat PLY
-const TEST_MODE = false; // Set true to see splat in front of camera
-
+const USE_PLY_MODEL = true;
+const PLY_PATH_WINGS = 'assets/wings.ply';
+const TEST_MODE = false; // Set true to see PLY without tracking
 const CAMERA_MODE = 'environment';
 
-// Debug helper
-window.debugSplat = () => {
-  if (splatMesh) {
-    console.log('Splat mesh:', {
-      visible: splatMesh.visible,
-      position: splatMesh.position,
-      scale: splatMesh.scale,
-      rotation: splatMesh.rotation
-    });
+// Make accessible for debugging
+window.debugWings = () => {
+  console.log('=== DEBUG INFO ===');
+  console.log('PLY Loaded:', plyLoaded);
+  console.log('Wings Mesh:', wingsMesh);
+  if (wingsMesh) {
+    console.log('  Visible:', wingsMesh.visible);
+    console.log('  Position:', wingsMesh.position);
+    console.log('  Scale:', wingsMesh.scale);
+    console.log('  Rotation:', wingsMesh.rotation);
   }
-  if (viewer) {
-    console.log('Viewer:', viewer);
-  }
+  console.log('Scene children:', scene?.children.length);
+  console.log('Renderer:', renderer);
+  console.log('Camera:', camera);
 };
 
 // === DEBUG LOGGER CLASS ===
@@ -103,61 +99,94 @@ class DebugLogger {
 
 // === INITIALIZE ===
 function init() {
+  console.log('=== INIT CALLED ===');
+  
   debugLogger = new DebugLogger();
-  debugLogger.log('info', '=== AR Back Wings with Gaussian Splatting ===');
-  debugLogger.log('info', `Mode: ${USE_GAUSSIAN_SPLAT ? 'GAUSSIAN SPLATTING' : 'Point Cloud'}`);
+  debugLogger.log('info', '🚀 AR Back Wings Starting...');
   debugLogger.log('info', `Test Mode: ${TEST_MODE ? 'ENABLED' : 'DISABLED'}`);
   debugLogger.log('info', `Camera: ${CAMERA_MODE}`);
-  debugLogger.log('success', 'Three.js loaded');
+  debugLogger.log('info', `PLY: ${USE_PLY_MODEL ? 'ENABLED' : 'DISABLED'}`);
+
+  // Check libraries
+  if (typeof THREE === 'undefined') {
+    debugLogger.log('error', '❌ Three.js NOT loaded!');
+    alert('Three.js failed to load!');
+    return;
+  }
+  debugLogger.log('success', '✅ Three.js loaded');
+
+  if (typeof THREE.PLYLoader === 'undefined') {
+    debugLogger.log('error', '❌ PLYLoader NOT loaded!');
+    alert('PLYLoader failed to load!');
+    return;
+  }
+  debugLogger.log('success', '✅ PLYLoader available');
 
   if (typeof tf === 'undefined') {
-    debugLogger.log('error', 'TensorFlow.js not loaded!');
+    debugLogger.log('error', '❌ TensorFlow NOT loaded!');
+    alert('TensorFlow failed to load!');
     return;
   }
-  debugLogger.log('success', 'TensorFlow.js loaded');
+  debugLogger.log('success', '✅ TensorFlow loaded');
 
   if (typeof poseDetection === 'undefined') {
-    debugLogger.log('error', 'Pose Detection not loaded!');
+    debugLogger.log('error', '❌ Pose Detection NOT loaded!');
+    alert('Pose Detection failed to load!');
     return;
   }
-  debugLogger.log('success', 'Pose Detection loaded');
-
-  if (USE_GAUSSIAN_SPLAT) {
-    if (typeof GaussianSplats3D === 'undefined') {
-      debugLogger.log('error', 'Gaussian Splats 3D not loaded!');
-      debugLogger.log('warning', 'Will fallback to point cloud');
-    } else {
-      debugLogger.log('success', 'Gaussian Splats 3D library loaded');
-    }
-  }
+  debugLogger.log('success', '✅ Pose Detection loaded');
 
   const startBtn = document.getElementById('start-btn');
   const instructions = document.getElementById('instructions');
 
+  if (!startBtn) {
+    debugLogger.log('error', '❌ Start button not found!');
+    return;
+  }
+
+  debugLogger.log('info', '🔘 Setting up button listener...');
+  
   startBtn.addEventListener('click', async () => {
-    debugLogger.log('info', 'Start button clicked!');
+    debugLogger.log('success', '🎯 START BUTTON CLICKED!');
     instructions.classList.add('hidden');
-    await startAR();
+    
+    try {
+      await startAR();
+    } catch (error) {
+      debugLogger.log('error', `Button click error: ${error.message}`);
+      console.error(error);
+    }
   });
 
   debugLogger.updateStatus('Ready - Tap Start');
-  debugLogger.log('success', 'Init complete. Type window.debugSplat() for info');
+  debugLogger.log('success', '✅ Init complete. Click Start!');
+  debugLogger.log('info', 'Type window.debugWings() for debug info');
 }
 
 // === START AR ===
 async function startAR() {
+  debugLogger.log('info', '▶️ startAR() called');
+  
   try {
-    debugLogger.updateStatus('Initializing...');
+    debugLogger.updateStatus('Checking camera...');
 
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error('Camera not supported');
+    if (!navigator.mediaDevices) {
+      throw new Error('navigator.mediaDevices not available');
     }
+
+    if (!navigator.mediaDevices.getUserMedia) {
+      throw new Error('getUserMedia not available');
+    }
+
+    debugLogger.log('success', '✅ Camera API available');
 
     canvas = document.getElementById('output-canvas');
     ctx = canvas.getContext('2d');
     video = document.getElementById('video');
 
     debugLogger.updateStatus('Requesting camera...');
+    debugLogger.log('info', `📹 Requesting ${CAMERA_MODE} camera...`);
+
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: CAMERA_MODE,
@@ -166,122 +195,166 @@ async function startAR() {
       }
     });
 
+    debugLogger.log('success', '✅ Camera permission granted');
+
     video.srcObject = stream;
-    await new Promise(resolve => {
+    
+    await new Promise((resolve) => {
       video.onloadedmetadata = () => {
         video.play();
+        debugLogger.log('success', `✅ Video playing: ${video.videoWidth}x${video.videoHeight}`);
         resolve();
       };
     });
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    debugLogger.log('success', `Video: ${video.videoWidth}x${video.videoHeight}`);
+    debugLogger.updateVideoStatus(`${video.videoWidth}x${video.videoHeight}`);
 
+    debugLogger.updateStatus('Setting up 3D...');
     await setupThreeJS();
 
-    debugLogger.updateStatus('Loading AI model...');
+    debugLogger.updateStatus('Loading AI...');
+    debugLogger.updateModelStatus('Loading...');
+    debugLogger.log('info', '🤖 Loading MoveNet...');
+
     poseModel = await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
       { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
     );
-    debugLogger.log('success', 'MoveNet loaded');
 
-    debugLogger.updateStatus(TEST_MODE ? 'TEST MODE Active' : 'Running');
+    debugLogger.log('success', '✅ MoveNet loaded');
+    debugLogger.updateModelStatus('Ready');
+
+    if (TEST_MODE) {
+      debugLogger.updateStatus('🧪 TEST MODE - PLY visible');
+    } else {
+      debugLogger.updateStatus('✅ Running - Show back!');
+    }
+
     isRunning = true;
+    debugLogger.log('success', '🎬 Starting render loop...');
     renderLoop();
 
   } catch (error) {
-    debugLogger.log('error', `Init error: ${error.message}`);
-    alert(`Failed: ${error.message}`);
+    debugLogger.log('error', `❌ startAR ERROR: ${error.message}`);
+    debugLogger.log('error', `Stack: ${error.stack}`);
+    debugLogger.updateStatus(`Error: ${error.message}`);
+    alert(`Failed to start: ${error.message}`);
   }
 }
 
-// === SETUP THREE.JS with Gaussian Splatting ===
+// === SETUP THREE.JS ===
 async function setupThreeJS() {
+  debugLogger.log('info', '🎨 Setting up Three.js...');
+
   renderer = new THREE.WebGLRenderer({ 
     alpha: true, 
-    antialias: false,
+    antialias: true,
     preserveDrawingBuffer: true 
   });
   renderer.setSize(canvas.width, canvas.height);
-  debugLogger.log('info', `Renderer: ${canvas.width}x${canvas.height}`);
+  debugLogger.log('success', `Renderer: ${canvas.width}x${canvas.height}`);
 
   scene = new THREE.Scene();
+  debugLogger.log('success', 'Scene created');
+
   camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000);
   camera.position.set(0, 0, 0);
+  debugLogger.log('success', 'Camera created at (0,0,0)');
 
-  if (USE_GAUSSIAN_SPLAT && typeof GaussianSplats3D !== 'undefined') {
-    debugLogger.log('info', '🌟 Loading Gaussian Splat...');
-    debugLogger.updateAssetStatus('Loading Gaussian Splat...');
+  if (USE_PLY_MODEL) {
+    debugLogger.log('info', `📦 Loading PLY: ${PLY_PATH_WINGS}`);
+    debugLogger.updateAssetStatus('Loading PLY...');
 
     try {
-      // Create Gaussian Splat Viewer
-      viewer = new GaussianSplats3D.Viewer({
-        cameraUp: [0, 1, 0],
-        initialCameraPosition: [0, 0, 0],
-        initialCameraLookAt: [0, 0, -1],
-        dynamicScene: true,
-        renderer: renderer,
-        camera: camera,
-        scene: scene,
-        useBuiltInControls: false,
-        gpuAcceleratedSort: true,
-        integerBasedSort: true,
-        sharedMemoryForWorkers: false,
-        halfPrecisionCovariancesOnGPU: true,
-        webXRMode: GaussianSplats3D.WebXRMode.None,
-        renderMode: GaussianSplats3D.RenderMode.Always,
-        sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant
+      const loader = new THREE.PLYLoader();
+      debugLogger.log('info', '✓ PLYLoader instantiated');
+
+      const geometry = await new Promise((resolve, reject) => {
+        loader.load(
+          PLY_PATH_WINGS,
+          (geo) => {
+            debugLogger.log('success', `✅ PLY loaded! ${geo.attributes.position.count} vertices`);
+            resolve(geo);
+          },
+          (xhr) => {
+            if (xhr.lengthComputable) {
+              const percent = (xhr.loaded / xhr.total * 100).toFixed(0);
+              debugLogger.log('info', `Loading: ${percent}%`);
+            }
+          },
+          (err) => {
+            debugLogger.log('error', `Load error: ${err}`);
+            reject(err);
+          }
+        );
       });
 
-      debugLogger.log('success', 'Viewer created');
-
-      // Load the PLY as Gaussian Splat
-      await viewer.addSplatScene(SPLAT_PLY_PATH, {
-        splatAlphaRemovalThreshold: 5,
-        showLoadingUI: false,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0, 1],
-        scale: [1, 1, 1]
-      });
-
-      debugLogger.log('success', '✅ Gaussian Splat loaded!');
-
-      // Get the splat mesh
-      splatMesh = viewer.splatMesh;
-      
-      if (TEST_MODE) {
-        splatMesh.position.set(0, 0, -3);
-        splatMesh.scale.set(0.5, 0.5, 0.5);
-        splatMesh.visible = true;
-        debugLogger.log('warning', '🧪 TEST: Splat at (0,0,-3) scale=0.5');
-      } else {
-        splatMesh.visible = false;
+      geometry.center();
+      geometry.computeBoundingBox();
+      if (!geometry.attributes.normal) {
+        geometry.computeVertexNormals();
       }
 
-      leftWing = splatMesh;
-      rightWing = splatMesh;
-      splatLoaded = true;
+      const bbox = geometry.boundingBox;
+      const size = new THREE.Vector3();
+      bbox.getSize(size);
+      plyBoundingBoxSize = size;
 
-      debugLogger.updateAssetStatus('Gaussian Splat ✓');
-      debugLogger.log('success', '🎉 Ready for tracking!');
+      debugLogger.log('success', `📦 Size: (${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)})`);
+
+      // Create point cloud material
+      const material = new THREE.PointsMaterial({
+        size: 0.05,
+        vertexColors: geometry.attributes.color ? true : false,
+        color: geometry.attributes.color ? 0xffffff : 0xff0000,
+        sizeAttenuation: false,
+        transparent: false,
+        opacity: 1.0
+      });
+
+      wingsMesh = new THREE.Points(geometry, material);
+
+      if (TEST_MODE) {
+        wingsMesh.position.set(0, 0, -3);
+        wingsMesh.scale.set(1, 1, 1);
+        wingsMesh.visible = true;
+        debugLogger.log('warning', '🧪 TEST: Wings at (0,0,-3)');
+      } else {
+        wingsMesh.visible = false;
+      }
+
+      scene.add(wingsMesh);
+      debugLogger.log('success', '✅ Wings added to scene');
+
+      leftWing = wingsMesh;
+      rightWing = wingsMesh;
+      plyLoaded = true;
+
+      debugLogger.updateAssetStatus('PLY loaded ✓');
 
     } catch (err) {
-      debugLogger.log('error', `Splat failed: ${err.message}`);
-      debugLogger.log('error', err.stack);
+      debugLogger.log('error', `PLY failed: ${err.message}`);
       createBoxWings();
     }
   } else {
-    debugLogger.log('info', 'Creating box placeholders');
     createBoxWings();
   }
+
+  debugLogger.log('success', '✅ Three.js setup complete');
 }
 
 // === BOX FALLBACK ===
 function createBoxWings() {
+  debugLogger.log('info', '📦 Creating box placeholders...');
+  
   const geo = new THREE.BoxGeometry(0.15, 0.35, 0.08);
-  const mat = new THREE.MeshBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.8 });
+  const mat = new THREE.MeshBasicMaterial({ 
+    color: 0x00ff88, 
+    transparent: true, 
+    opacity: 0.8 
+  });
 
   leftWing = new THREE.Mesh(geo, mat);
   rightWing = new THREE.Mesh(geo, mat.clone());
@@ -289,11 +362,12 @@ function createBoxWings() {
 
   scene.add(leftWing);
   scene.add(rightWing);
+
   leftWing.visible = false;
   rightWing.visible = false;
 
   debugLogger.updateAssetStatus('Box placeholders');
-  debugLogger.log('success', 'Boxes created');
+  debugLogger.log('success', '✅ Boxes created');
 }
 
 // === RENDER LOOP ===
@@ -304,10 +378,12 @@ async function renderLoop() {
   frameCount++;
   const now = Date.now();
   if (now - lastFpsUpdate >= 1000) {
-    debugLogger.updateFPS(frameCount / ((now - lastFpsUpdate) / 1000));
+    const fps = frameCount / ((now - lastFpsUpdate) / 1000);
+    debugLogger.updateFPS(fps);
     
-    if (splatMesh) {
-      debugLogger.log('info', `Splat: visible=${splatMesh.visible}, pos=(${splatMesh.position.x.toFixed(2)},${splatMesh.position.y.toFixed(2)},${splatMesh.position.z.toFixed(2)})`);
+    if (wingsMesh) {
+      const vis = wingsMesh.visible ? '👁️' : '🚫';
+      debugLogger.log('info', `${vis} Wings: pos=(${wingsMesh.position.z.toFixed(2)}), scale=${wingsMesh.scale.x.toFixed(4)}`);
     }
     
     frameCount = 0;
@@ -320,64 +396,62 @@ async function renderLoop() {
   ctx.drawImage(video, CAMERA_MODE === 'user' ? -canvas.width : 0, 0, canvas.width, canvas.height);
   ctx.restore();
 
-  // Pose tracking
+  // Pose detection
   if (video.readyState === video.HAVE_ENOUGH_DATA && !TEST_MODE) {
     try {
       const poses = await poseModel.estimatePoses(video);
 
       if (poses.length > 0) {
         const kp = poses[0].keypoints;
-        const lShoulder = kp.find(k => k.name === 'left_shoulder');
-        const rShoulder = kp.find(k => k.name === 'right_shoulder');
-        const lHip = kp.find(k => k.name === 'left_hip');
-        const rHip = kp.find(k => k.name === 'right_hip');
+        const ls = kp.find(k => k.name === 'left_shoulder');
+        const rs = kp.find(k => k.name === 'right_shoulder');
+        const lh = kp.find(k => k.name === 'left_hip');
+        const rh = kp.find(k => k.name === 'right_hip');
 
-        if (lShoulder?.score > 0.3 && rShoulder?.score > 0.3) {
-          const shoulderDist = Math.hypot(rShoulder.x - lShoulder.x, rShoulder.y - lShoulder.y);
+        if (ls?.score > 0.3 && rs?.score > 0.3) {
+          const dist = Math.hypot(rs.x - ls.x, rs.y - ls.y);
           
           if (!baseShoulderDistance) {
-            baseShoulderDistance = shoulderDist;
-            debugLogger.log('info', `Shoulder dist: ${shoulderDist.toFixed(2)}px`);
+            baseShoulderDistance = dist;
           }
 
-          const depth = -2.0 - (150 / shoulderDist);
-          const scale = Math.max(0.5, shoulderDist / 150);
+          const depth = -2.0 - (150 / dist);
+          const scale = Math.max(0.5, dist / 150);
 
           let spine = {
-            x: (lShoulder.x + rShoulder.x) / 2,
-            y: (lShoulder.y + rShoulder.y) / 2
+            x: (ls.x + rs.x) / 2,
+            y: (ls.y + rs.y) / 2
           };
 
-          if (lHip?.score > 0.2 && rHip?.score > 0.2) {
-            spine.y = (spine.y + (lHip.y + rHip.y) / 2) / 2;
+          if (lh?.score > 0.2 && rh?.score > 0.2) {
+            spine.y = (spine.y + (lh.y + rh.y) / 2) / 2;
           }
 
-          const angle = Math.atan2(rShoulder.y - lShoulder.y, rShoulder.x - lShoulder.x);
+          const angle = Math.atan2(rs.y - ls.y, rs.x - ls.x);
 
-          if (splatLoaded && splatMesh) {
-            positionSplatOnBack(splatMesh, lShoulder, rShoulder, spine, depth, scale, angle);
-            if (!splatMesh.visible) {
-              splatMesh.visible = true;
-              debugLogger.log('success', '✅ Splat visible');
+          if (plyLoaded && wingsMesh) {
+            positionWings(wingsMesh, ls, rs, spine, depth, scale, angle);
+            if (!wingsMesh.visible) {
+              wingsMesh.visible = true;
+              debugLogger.log('success', '👁️ Wings NOW VISIBLE');
             }
           } else if (leftWing && rightWing) {
-            // Box fallback positioning
-            positionBoxWing(leftWing, lShoulder, spine, depth, scale, angle, 'left');
-            positionBoxWing(rightWing, rShoulder, spine, depth, scale, angle, 'right');
+            positionBox(leftWing, ls, spine, depth, scale, angle, 'left');
+            positionBox(rightWing, rs, spine, depth, scale, angle, 'right');
             leftWing.visible = true;
             rightWing.visible = true;
           }
 
-          debugLogger.updatePoseStatus(`Detected (${lShoulder.score.toFixed(2)})`);
-          drawDebugPoints(ctx, [lShoulder, rShoulder, lHip, rHip].filter(Boolean));
+          debugLogger.updatePoseStatus(`Detected (${ls.score.toFixed(2)})`);
+          drawDebugPoints(ctx, [ls, rs, lh, rh].filter(Boolean));
         } else {
-          if (splatMesh) splatMesh.visible = false;
+          if (wingsMesh) wingsMesh.visible = false;
           if (leftWing) leftWing.visible = false;
           if (rightWing) rightWing.visible = false;
           debugLogger.updatePoseStatus('Low confidence');
         }
       } else {
-        if (splatMesh) splatMesh.visible = false;
+        if (wingsMesh) wingsMesh.visible = false;
         if (leftWing) leftWing.visible = false;
         if (rightWing) rightWing.visible = false;
         debugLogger.updatePoseStatus('No person');
@@ -387,20 +461,13 @@ async function renderLoop() {
     }
   }
 
-  // Render
-  if (viewer && splatLoaded) {
-    viewer.update();
-    viewer.render();
-  } else {
-    renderer.render(scene, camera);
-  }
-  
+  renderer.render(scene, camera);
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION GAUSSIAN SPLAT ===
-function positionSplatOnBack(splat, lSh, rSh, spine, depth, scale, angle) {
-  if (!splat) return;
+// === POSITION WINGS ===
+function positionWings(wings, ls, rs, spine, depth, scale, angle) {
+  if (!wings) return;
 
   let spineX = (spine.x / video.videoWidth) * 2 - 1;
   let spineY = -(spine.y / video.videoHeight) * 2 + 1;
@@ -415,27 +482,31 @@ function positionSplatOnBack(splat, lSh, rSh, spine, depth, scale, angle) {
   smoothedWingsPos.y += (targetY - smoothedWingsPos.y) * SMOOTHING_FACTOR;
   smoothedWingsPos.z += (targetZ - smoothedWingsPos.z) * SMOOTHING_FACTOR;
 
-  splat.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
-  
-  const scaleFactor = scale * 0.3; // Adjust based on your splat size
-  splat.scale.set(scaleFactor, scaleFactor, scaleFactor);
+  wings.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
+
+  // Auto-scale based on bbox
+  let scaleFactor;
+  if (plyBoundingBoxSize) {
+    const avg = (plyBoundingBoxSize.x + plyBoundingBoxSize.y + plyBoundingBoxSize.z) / 3;
+    scaleFactor = (0.4 / avg) * scale;
+  } else {
+    scaleFactor = scale * 0.5;
+  }
+
+  wings.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
   const bodyRot = CAMERA_MODE === 'user' ? -angle : angle;
-  const targetRotX = -0.2;
-  const targetRotY = bodyRot * 0.5;
-  const targetRotZ = bodyRot * 0.2;
+  smoothedWingsRot.x += (-0.2 - smoothedWingsRot.x) * SMOOTHING_FACTOR;
+  smoothedWingsRot.y += ((bodyRot * 0.5) - smoothedWingsRot.y) * SMOOTHING_FACTOR;
+  smoothedWingsRot.z += ((bodyRot * 0.2) - smoothedWingsRot.z) * SMOOTHING_FACTOR;
 
-  smoothedWingsRot.x += (targetRotX - smoothedWingsRot.x) * SMOOTHING_FACTOR;
-  smoothedWingsRot.y += (targetRotY - smoothedWingsRot.y) * SMOOTHING_FACTOR;
-  smoothedWingsRot.z += (targetRotZ - smoothedWingsRot.z) * SMOOTHING_FACTOR;
-
-  splat.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
+  wings.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
 }
 
-// === POSITION BOX (fallback) ===
-function positionBoxWing(wing, shoulder, spine, depth, scale, angle, side) {
+// === POSITION BOX ===
+function positionBox(wing, shoulder, spine, depth, scale, angle, side) {
   if (!wing) return;
-  
+
   let shX = (shoulder.x / video.videoWidth) * 2 - 1;
   let shY = -(shoulder.y / video.videoHeight) * 2 + 1;
   let spX = (spine.x / video.videoWidth) * 2 - 1;
@@ -449,7 +520,7 @@ function positionBoxWing(wing, shoulder, spine, depth, scale, angle, side) {
   const dx = shX - spX;
   const dy = shY - spY;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  
+
   const targetX = spX + (dx / dist) * dist * 0.7;
   const targetY = spY + (dy / dist) * dist * 0.7 - (0.15 * scale);
   const targetZ = depth - (0.4 * scale);
@@ -464,10 +535,9 @@ function positionBoxWing(wing, shoulder, spine, depth, scale, angle, side) {
 
   const bodyRot = CAMERA_MODE === 'user' ? -angle : angle;
   const baseRotY = side === 'left' ? 0.5 : -0.5;
-  const targetRotY = baseRotY + (bodyRot * 0.5);
-
+  
   const rot = side === 'left' ? smoothedLeftRot : smoothedRightRot;
-  rot.y += (targetRotY - rot.y) * SMOOTHING_FACTOR;
+  rot.y += ((baseRotY + bodyRot * 0.5) - rot.y) * SMOOTHING_FACTOR;
   wing.rotation.y = rot.y;
 }
 
@@ -475,7 +545,7 @@ function positionBoxWing(wing, shoulder, spine, depth, scale, angle, side) {
 function drawDebugPoints(ctx, keypoints) {
   ctx.fillStyle = '#00ff88';
   keypoints.forEach(kp => {
-    if (kp.score > 0.3) {
+    if (kp?.score > 0.3) {
       let x = kp.x;
       if (CAMERA_MODE === 'user') x = canvas.width - x;
       ctx.beginPath();
@@ -485,5 +555,8 @@ function drawDebugPoints(ctx, keypoints) {
   });
 }
 
-// === START ===
-window.addEventListener('DOMContentLoaded', init);
+// === START ON LOAD ===
+window.addEventListener('DOMContentLoaded', () => {
+  console.log('DOM loaded, calling init()');
+  init();
+});
