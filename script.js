@@ -24,10 +24,11 @@ let baseShoulderDistance = null;
 
 // Wings mesh
 let wingsMesh = null;
+let plyLoaded = false;
 
 // Configuration
 const USE_PLY_MODEL = true;
-const PLY_PATH_WINGS = 'assets/wings.ply'; // Your PLY file (can be Gaussian Splat format)
+const PLY_PATH_WINGS = 'assets/wings.ply'; // Your PLY file
 
 // Camera configuration
 const CAMERA_MODE = 'environment';
@@ -107,6 +108,7 @@ function init() {
   debugLogger = new DebugLogger();
   debugLogger.log('info', '=== AR Back Wings Starting ===');
   debugLogger.log('info', `Camera Mode: ${CAMERA_MODE === 'user' ? 'Front (Selfie)' : 'Rear'}`);
+  debugLogger.log('info', `PLY Path: ${PLY_PATH_WINGS}`);
   debugLogger.log('success', 'Three.js ES6 module loaded');
 
   if (typeof tf === 'undefined') {
@@ -212,6 +214,7 @@ async function startAR() {
 
   } catch (error) {
     debugLogger.log('error', `INIT ERROR: ${error.message}`);
+    debugLogger.log('error', `Stack: ${error.stack}`);
     debugLogger.updateStatus(`Error: ${error.message}`);
     alert(`Failed to start AR: ${error.message}\n\nPlease check camera permissions and try again.`);
   }
@@ -225,8 +228,10 @@ async function setupThreeJS() {
     preserveDrawingBuffer: true 
   });
   renderer.setSize(canvas.width, canvas.height);
+  debugLogger.log('info', `Renderer size: ${canvas.width}x${canvas.height}`);
 
   scene = new THREE.Scene();
+  debugLogger.log('info', 'Scene created');
 
   camera = new THREE.PerspectiveCamera(
     75,
@@ -235,80 +240,106 @@ async function setupThreeJS() {
     1000
   );
   camera.position.set(0, 0, 0);
+  debugLogger.log('info', 'Camera created at (0,0,0)');
 
   if (USE_PLY_MODEL) {
-    debugLogger.log('info', 'Loading PLY file (Gaussian Splat format)...');
+    debugLogger.log('info', `Loading PLY file from: ${PLY_PATH_WINGS}`);
     debugLogger.updateAssetStatus('Loading PLY...');
     
     try {
       const loader = new PLYLoader();
-
-      debugLogger.log('info', 'PLY Loader initialized');
+      debugLogger.log('success', 'PLYLoader instantiated');
 
       const geometry = await new Promise((resolve, reject) => {
+        debugLogger.log('info', 'Starting PLY file load...');
+        
         loader.load(
           PLY_PATH_WINGS,
           (geo) => {
-            debugLogger.log('success', 'PLY geometry loaded');
+            debugLogger.log('success', `PLY loaded! Vertices: ${geo.attributes.position.count}`);
             resolve(geo);
           },
           (progress) => {
-            if (progress.total > 0) {
+            if (progress.lengthComputable && progress.total > 0) {
               const percent = ((progress.loaded / progress.total) * 100).toFixed(0);
-              debugLogger.log('info', `Loading: ${percent}%`);
+              debugLogger.log('info', `Loading: ${percent}% (${progress.loaded}/${progress.total} bytes)`);
+            } else {
+              debugLogger.log('info', `Loaded: ${progress.loaded} bytes`);
             }
           },
           (error) => {
             debugLogger.log('error', `PLY load error: ${error}`);
+            debugLogger.log('error', `Error type: ${error.constructor.name}`);
             reject(error);
           }
         );
       });
 
-      debugLogger.log('info', 'Processing PLY geometry...');
+      debugLogger.log('info', 'Processing geometry...');
+      debugLogger.log('info', `Vertex count: ${geometry.attributes.position.count}`);
+      debugLogger.log('info', `Has colors: ${geometry.attributes.color ? 'Yes' : 'No'}`);
+      debugLogger.log('info', `Has normals: ${geometry.attributes.normal ? 'Yes' : 'No'}`);
 
-      // Center and compute normals
+      // Center and compute
       geometry.center();
       geometry.computeBoundingBox();
-      geometry.computeVertexNormals();
+      if (!geometry.attributes.normal) {
+        geometry.computeVertexNormals();
+      }
 
       const bbox = geometry.boundingBox;
-      debugLogger.log('info', `Bounds: X[${bbox.min.x.toFixed(2)}, ${bbox.max.x.toFixed(2)}] Y[${bbox.min.y.toFixed(2)}, ${bbox.max.y.toFixed(2)}] Z[${bbox.min.z.toFixed(2)}, ${bbox.max.z.toFixed(2)}]`);
+      const size = new THREE.Vector3();
+      bbox.getSize(size);
+      
+      debugLogger.log('info', `Bounding box:`);
+      debugLogger.log('info', `  Min: (${bbox.min.x.toFixed(2)}, ${bbox.min.y.toFixed(2)}, ${bbox.min.z.toFixed(2)})`);
+      debugLogger.log('info', `  Max: (${bbox.max.x.toFixed(2)}, ${bbox.max.y.toFixed(2)}, ${bbox.max.z.toFixed(2)})`);
+      debugLogger.log('info', `  Size: (${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)})`);
 
-      // Create material for point cloud rendering (Gaussian Splat style)
+      // Create material - use Points for Gaussian Splat style
       const material = new THREE.PointsMaterial({
-        size: 0.01,
-        vertexColors: true,
+        size: 0.02,
+        vertexColors: geometry.attributes.color ? true : false,
+        color: geometry.attributes.color ? 0xffffff : 0x00ff88,
         sizeAttenuation: true,
         transparent: true,
         opacity: 0.9,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
+        blending: THREE.NormalBlending,
+        depthWrite: true,
+        depthTest: true
       });
 
-      // Create Points mesh (for Gaussian Splat PLY)
+      debugLogger.log('info', 'Material created');
+
+      // Create Points mesh
       wingsMesh = new THREE.Points(geometry, material);
-      wingsMesh.visible = false;
+      wingsMesh.visible = false; // Start hidden
+      
+      debugLogger.log('info', `Wings mesh created, visible: ${wingsMesh.visible}`);
 
       scene.add(wingsMesh);
-      debugLogger.log('success', 'PLY mesh added to scene');
+      debugLogger.log('success', 'Wings mesh added to scene');
+      debugLogger.log('info', `Scene children count: ${scene.children.length}`);
 
       leftWing = wingsMesh;
       rightWing = wingsMesh;
+      plyLoaded = true;
 
-      debugLogger.updateAssetStatus('PLY loaded (Point Cloud)');
-      debugLogger.log('success', 'Wings ready');
+      debugLogger.updateAssetStatus('PLY loaded ✓');
+      debugLogger.log('success', '✓ PLY wings ready for tracking');
 
     } catch (err) {
-      debugLogger.log('error', `PLY load failed: ${err.message}`);
-      debugLogger.log('info', 'Falling back to box placeholders');
+      debugLogger.log('error', `PLY load FAILED: ${err.message}`);
+      debugLogger.log('error', `Full error: ${err.stack}`);
+      debugLogger.log('warning', 'Creating fallback box wings...');
       createBoxWings();
     }
   } else {
+    debugLogger.log('info', 'PLY disabled, creating boxes');
     createBoxWings();
   }
 
-  debugLogger.log('success', 'Wing assets ready');
+  debugLogger.log('success', 'Setup complete');
 }
 
 // === CREATE BOX WING PLACEHOLDERS ===
@@ -345,6 +376,12 @@ async function renderLoop() {
   if (now - lastFpsUpdate >= 1000) {
     const fps = frameCount / ((now - lastFpsUpdate) / 1000);
     debugLogger.updateFPS(fps);
+    
+    // Log wing status every second
+    if (wingsMesh) {
+      debugLogger.log('info', `Wings: visible=${wingsMesh.visible}, pos=(${wingsMesh.position.x.toFixed(2)}, ${wingsMesh.position.y.toFixed(2)}, ${wingsMesh.position.z.toFixed(2)}), scale=${wingsMesh.scale.x.toFixed(4)}`);
+    }
+    
     frameCount = 0;
     lastFpsUpdate = now;
   }
@@ -399,10 +436,16 @@ async function renderLoop() {
             rightShoulder.x - leftShoulder.x
           );
 
-          if (USE_PLY_MODEL && wingsMesh) {
+          // Position wings
+          if (plyLoaded && wingsMesh) {
             positionWingsOnBack(wingsMesh, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle);
-            wingsMesh.visible = true;
-          } else if (leftWing && rightWing && leftWing !== wingsMesh) {
+            
+            if (!wingsMesh.visible) {
+              wingsMesh.visible = true;
+              debugLogger.log('success', '✓ Wings now VISIBLE');
+            }
+          } else if (leftWing && rightWing && !plyLoaded) {
+            // Box wings
             if (CAMERA_MODE === 'user') {
               positionWingGluedToBack(leftWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
               positionWingGluedToBack(rightWing, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'right');
@@ -421,15 +464,15 @@ async function renderLoop() {
           drawDebugPoints(ctx, debugPoints);
         } else {
           if (wingsMesh) wingsMesh.visible = false;
-          if (leftWing && leftWing !== wingsMesh) leftWing.visible = false;
-          if (rightWing && rightWing !== wingsMesh) rightWing.visible = false;
+          if (leftWing && !plyLoaded) leftWing.visible = false;
+          if (rightWing && !plyLoaded) rightWing.visible = false;
           debugLogger.updatePoseStatus('Low confidence');
           baseShoulderDistance = null;
         }
       } else {
         if (wingsMesh) wingsMesh.visible = false;
-        if (leftWing && leftWing !== wingsMesh) leftWing.visible = false;
-        if (rightWing && rightWing !== wingsMesh) rightWing.visible = false;
+        if (leftWing && !plyLoaded) leftWing.visible = false;
+        if (rightWing && !plyLoaded) rightWing.visible = false;
         debugLogger.updatePoseStatus('No person detected');
         baseShoulderDistance = null;
       }
@@ -444,7 +487,10 @@ async function renderLoop() {
 
 // === POSITION WINGS ON BACK ===
 function positionWingsOnBack(wings, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle) {
-  if (!wings) return;
+  if (!wings) {
+    debugLogger.log('error', 'positionWingsOnBack called with null wings');
+    return;
+  }
 
   let spineCenterX = (spineCenter.x / video.videoWidth) * 2 - 1;
   let spineCenterY = -(spineCenter.y / video.videoHeight) * 2 + 1;
@@ -465,8 +511,9 @@ function positionWingsOnBack(wings, leftShoulder, rightShoulder, spineCenter, de
 
   wings.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
   
-  // Scale for point cloud - adjust based on your model size
-  wings.scale.set(scale * 0.1, scale * 0.1, scale * 0.1);
+  // Larger scale for visibility
+  const scaleFactor = scale * 1.0; // Increased from 0.01
+  wings.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
   const baseRotX = -0.2;
   const baseRotY = 0;
