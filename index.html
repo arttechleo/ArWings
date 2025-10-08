@@ -8,6 +8,12 @@
   <title>AR Back Wings</title>
   <link rel="stylesheet" href="style.css">
 
+  <!-- Load Three.js first (non-module) -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  
+  <!-- PLYLoader -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/PLYLoader.js"></script>
+
   <!-- TensorFlow.js + Pose Detection -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.0.0"></script>
@@ -43,17 +49,7 @@
     </div>
   </div>
 
-  <!-- Three.js with import map -->
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-        "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.5.0/build/gaussian-splats-3d.module.js"
-      }
-    }
-  </script>
-
-  <script type="module" src="script.js"></script>
+  <!-- Load script as regular script, not module -->
+  <script src="script.js"></script>
 </body>
 </html>
