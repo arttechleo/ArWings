@@ -4,72 +4,133 @@
 // standard Gaussian Splat PLY files which have more complex attributes like
 // scale and rotation. If your splat appears as a single dot or is distorted,
 // this loader is the likely cause.
+// === GAUSSIAN SPLAT LOADER (REVISED AND ROBUST) ===
+// This new loader correctly parses the PLY header to find the exact location of
+// position and color data, making it compatible with standard Gaussian Splat files.
 class GaussianSplatLoader {
-  constructor() {
-    this.splatData = null;
-  }
-
-  async load(url, onProgress) {
-    try {
-      const response = await fetch(url);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to load: ${response.status} ${response.statusText}`);
-      }
-
-      const buffer = await response.arrayBuffer();
-      
-      if (onProgress) {
-        onProgress({ loaded: buffer.byteLength, total: buffer.byteLength });
-      }
-
-      return this.parsePLY(buffer);
-    } catch (error) {
-      throw new Error(`Gaussian Splat load failed: ${error.message}`);
-    }
-  }
-
-  parsePLY(buffer) {
-    const ubuf = new Uint8Array(buffer);
-    const header = new TextDecoder().decode(ubuf.slice(0, 1024));
-    
-    let vertexCount = 0;
-    const match = header.match(/element vertex (\d+)/);
-    if (match) {
-      vertexCount = parseInt(match[1]);
+    constructor() {
+        // No splatData needed here anymore
     }
 
-    if (vertexCount === 0) {
-      throw new Error('Invalid PLY: no vertices found');
+    async load(url) {
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Failed to load: ${response.status} ${response.statusText}`);
+            }
+            const buffer = await response.arrayBuffer();
+            return this.parsePLY(buffer);
+        } catch (error) {
+            throw new Error(`Gaussian Splat load failed: ${error.message}`);
+        }
     }
 
-    const headerEnd = header.indexOf('end_header\n') + 11;
-    const dataView = new DataView(buffer, headerEnd);
-    const vertexSize = 24; // Hardcoded assumption
-    
-    const positions = new Float32Array(vertexCount * 3);
-    const colors = new Float32Array(vertexCount * 3);
+    parsePLY(buffer) {
+        // Decode the header
+        const headerText = new TextDecoder().decode(buffer.slice(0, 2048));
+        const headerEndIndex = headerText.indexOf('end_header\n') + 11;
 
-    for (let i = 0; i < vertexCount; i++) {
-      const offset = i * vertexSize;
-      
-      positions[i * 3] = dataView.getFloat32(offset, true);
-      positions[i * 3 + 1] = dataView.getFloat32(offset + 4, true);
-      positions[i * 3 + 2] = dataView.getFloat32(offset + 8, true);
-      
-      colors[i * 3] = dataView.getUint8(offset + 12) / 255;
-      colors[i * 3 + 1] = dataView.getUint8(offset + 13) / 255;
-      colors[i * 3 + 2] = dataView.getUint8(offset + 14) / 255;
+        // Get the number of vertices
+        const vertexCountMatch = headerText.match(/element vertex (\d+)/);
+        if (!vertexCountMatch) throw new Error("Invalid PLY: Missing 'element vertex' count.");
+        const vertexCount = parseInt(vertexCountMatch[1]);
+
+        // Parse all property lines to determine the vertex structure
+        const propertyLines = headerText.slice(0, headerEndIndex).match(/property .+/g);
+        if (!propertyLines) throw new Error("Invalid PLY: No properties found in header.");
+
+        let vertexStride = 0;
+        const properties = [];
+        const typeSizeBytes = { 'float': 4, 'uchar': 1 };
+
+        for (const line of propertyLines) {
+            const [, type, name] = line.split(' ');
+            if (typeSizeBytes[type]) {
+                properties.push({ name, type, offset: vertexStride });
+                vertexStride += typeSizeBytes[type];
+            }
+        }
+        if (vertexStride === 0) throw new Error("Could not determine vertex stride from PLY properties.");
+
+        // Find the specific offsets for position and color
+        const attrs = {
+            pos: ['x', 'y', 'z'],
+            color: ['f_dc_0', 'f_dc_1', 'f_dc_2'], // Standard for GS
+            fallbackColor: ['red', 'green', 'blue'] // Fallback for simple point clouds
+        };
+
+        const findAttr = (names) => properties.find(p => names.includes(p.name));
+        const posOffsets = {
+            x: findAttr(attrs.pos)?.offset,
+            y: findAttr(attrs.pos, 1)?.offset,
+            z: findAttr(attrs.pos, 2)?.offset
+        };
+        let colorOffsets = {
+            r: findAttr(attrs.color)?.offset,
+            g: findAttr(attrs.color, 1)?.offset,
+            b: findAttr(attrs.color, 2)?.offset
+        };
+        let isSphericalHarmonics = true;
+
+        // Check for fallback color attributes if standard GS attributes are not found
+        if (colorOffsets.r === undefined) {
+            isSphericalHarmonics = false;
+            colorOffsets = {
+                r: findAttr(attrs.fallbackColor)?.offset,
+                g: findAttr(attrs.fallbackColor, 1)?.offset,
+                b: findAttr(attrs.fallbackColor, 2)?.offset
+            };
+        }
+        
+        if (posOffsets.x === undefined || posOffsets.y === undefined || posOffsets.z === undefined) {
+             throw new Error("Invalid PLY: Could not find all position properties (x, y, z).");
+        }
+        
+        // Create arrays for geometry
+        const positions = new Float32Array(vertexCount * 3);
+        const colors = new Float32Array(vertexCount * 3);
+        const dataView = new DataView(buffer, headerEndIndex);
+        const SH_C0 = 0.28209479177387814; // Constant for Spherical Harmonics conversion
+
+        for (let i = 0; i < vertexCount; i++) {
+            const offset = i * vertexStride;
+
+            // Read position
+            positions[i * 3 + 0] = dataView.getFloat32(offset + posOffsets.x, true);
+            positions[i * 3 + 1] = dataView.getFloat32(offset + posOffsets.y, true);
+            positions[i * 3 + 2] = dataView.getFloat32(offset + posOffsets.z, true);
+
+            // Read color
+            if (colorOffsets.r !== undefined) {
+                if (isSphericalHarmonics) {
+                    // Convert from Spherical Harmonics to linear RGB
+                    colors[i * 3 + 0] = 0.5 + SH_C0 * dataView.getFloat32(offset + colorOffsets.r, true);
+                    colors[i * 3 + 1] = 0.5 + SH_C0 * dataView.getFloat32(offset + colorOffsets.g, true);
+                    colors[i * 3 + 2] = 0.5 + SH_C0 * dataView.getFloat32(offset + colorOffsets.b, true);
+                } else {
+                    // Assume uchar for simple RGB
+                    colors[i * 3 + 0] = dataView.getUint8(offset + colorOffsets.r) / 255.0;
+                    colors[i * 3 + 1] = dataView.getUint8(offset + colorOffsets.g) / 255.0;
+                    colors[i * 3 + 2] = dataView.getUint8(offset + colorOffsets.b) / 255.0;
+                }
+            } else {
+                // Default to white if no color is found
+                colors.fill(1.0, i * 3, i * 3 + 3);
+            }
+        }
+        
+        // Create and return the Three.js geometry
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geometry.computeBoundingBox();
+        
+        // IMPORTANT: Do NOT center the geometry. The model's origin is likely
+        // the intended attachment point for the wings.
+        // geometry.center(); // This line is intentionally removed.
+
+        return geometry;
     }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.computeBoundingBox();
-    geometry.center();
-
-    return geometry;
-  }
 }
 
 // Main app variables
