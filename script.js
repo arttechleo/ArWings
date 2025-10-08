@@ -8,21 +8,17 @@ let frameCount = 0;
 let lastFpsUpdate = Date.now();
 
 // Smoothing variables for stable positioning
-let smoothedLeftPos = { x: 0, y: 0, z: 0 };
-let smoothedRightPos = { x: 0, y: 0, z: 0 };
-let smoothedLeftRot = { x: 0, y: 0, z: 0 };
-let smoothedRightRot = { x: 0, y: 0, z: 0 };
+let smoothedWingsPos = { x: 0, y: 0, z: 0 };
+let smoothedWingsRot = { x: 0, y: 0, z: 0 };
 const SMOOTHING_FACTOR = 0.4;
 
 // Store initial shoulder distance to maintain wing spacing
 let baseShoulderDistance = null;
 
-// PLY Model support
-let leftPlyMesh = null;
-let rightPlyMesh = null;
-const USE_PLY_MODEL = false; // Set to true when you have .ply files
-const PLY_PATH_LEFT = 'assets/left_wing.ply'; // Path to your left wing PLY file
-const PLY_PATH_RIGHT = 'assets/right_wing.ply'; // Path to your right wing PLY file
+// PLY Model support - Single file with both wings
+let wingsPlyMesh = null;
+const USE_PLY_MODEL = true; // Set to true when you have .ply file
+const PLY_PATH_WINGS = 'assets/wings.ply'; // Path to your combined wings PLY file
 
 // Camera configuration
 const CAMERA_MODE = 'environment';
@@ -225,7 +221,7 @@ async function startAR() {
   }
 }
 
-// === SETUP THREE.JS (with PLY support) ===
+// === SETUP THREE.JS (with single PLY file for both wings) ===
 async function setupThreeJS() {
   renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
   renderer.setSize(canvas.width, canvas.height);
@@ -242,76 +238,61 @@ async function setupThreeJS() {
 
   // Load assets based on configuration
   if (USE_PLY_MODEL && typeof THREE.PLYLoader !== 'undefined') {
-    debugLogger.log('info', 'Loading PLY model assets...');
-    debugLogger.updateAssetStatus('Loading PLY models...');
+    debugLogger.log('info', 'Loading PLY model (both wings)...');
+    debugLogger.updateAssetStatus('Loading PLY model...');
     
     try {
       const loader = new THREE.PLYLoader();
       
-      // Load left wing
-      const leftGeometry = await new Promise((resolve, reject) => {
+      // Load combined wings PLY file
+      const wingsGeometry = await new Promise((resolve, reject) => {
         loader.load(
-          PLY_PATH_LEFT,
+          PLY_PATH_WINGS,
           (geometry) => resolve(geometry),
           (progress) => {
-            const percent = (progress.loaded / progress.total * 100).toFixed(0);
-            debugLogger.log('info', `Loading left wing: ${percent}%`);
+            if (progress.total > 0) {
+              const percent = (progress.loaded / progress.total * 100).toFixed(0);
+              debugLogger.log('info', `Loading wings: ${percent}%`);
+            }
           },
           (error) => reject(error)
         );
       });
+      
+      debugLogger.log('success', 'Wings PLY geometry loaded');
       
       // Create mesh from geometry
-      const leftMaterial = new THREE.MeshBasicMaterial({
+      const wingsMaterial = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         vertexColors: true, // Use colors from PLY file if available
-        side: THREE.DoubleSide
-      });
-      leftPlyMesh = new THREE.Mesh(leftGeometry, leftMaterial);
-      leftPlyMesh.visible = false;
-      
-      // Center and scale the geometry
-      leftGeometry.center();
-      leftGeometry.computeBoundingBox();
-      
-      scene.add(leftPlyMesh);
-      debugLogger.log('success', 'Left wing PLY loaded');
-      
-      // Load right wing
-      const rightGeometry = await new Promise((resolve, reject) => {
-        loader.load(
-          PLY_PATH_RIGHT,
-          (geometry) => resolve(geometry),
-          (progress) => {
-            const percent = (progress.loaded / progress.total * 100).toFixed(0);
-            debugLogger.log('info', `Loading right wing: ${percent}%`);
-          },
-          (error) => reject(error)
-        );
+        side: THREE.DoubleSide,
+        transparent: false,
+        opacity: 1.0
       });
       
-      const rightMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        vertexColors: true,
-        side: THREE.DoubleSide
-      });
-      rightPlyMesh = new THREE.Mesh(rightGeometry, rightMaterial);
-      rightPlyMesh.visible = false;
+      wingsPlyMesh = new THREE.Mesh(wingsGeometry, wingsMaterial);
+      wingsPlyMesh.visible = false;
       
-      rightGeometry.center();
-      rightGeometry.computeBoundingBox();
+      // Center and compute bounding box
+      wingsGeometry.center();
+      wingsGeometry.computeBoundingBox();
+      wingsGeometry.computeVertexNormals(); // Better lighting
       
-      scene.add(rightPlyMesh);
-      debugLogger.log('success', 'Right wing PLY loaded');
+      const bbox = wingsGeometry.boundingBox;
+      debugLogger.log('info', `Model bounds: X[${bbox.min.x.toFixed(2)}, ${bbox.max.x.toFixed(2)}] Y[${bbox.min.y.toFixed(2)}, ${bbox.max.y.toFixed(2)}] Z[${bbox.min.z.toFixed(2)}, ${bbox.max.z.toFixed(2)}]`);
       
-      leftWing = leftPlyMesh;
-      rightWing = rightPlyMesh;
+      scene.add(wingsPlyMesh);
+      debugLogger.log('success', 'Wings PLY mesh added to scene');
       
-      debugLogger.updateAssetStatus('PLY models loaded');
-      debugLogger.log('success', 'PLY wing models ready');
+      // Use the single mesh as both wings (they're already combined)
+      leftWing = wingsPlyMesh;
+      rightWing = wingsPlyMesh; // Same reference for compatibility
+      
+      debugLogger.updateAssetStatus('PLY model loaded');
+      debugLogger.log('success', 'PLY wing model ready');
       
     } catch (err) {
-      debugLogger.log('error', `Failed to load PLY models: ${err.message}`);
+      debugLogger.log('error', `Failed to load PLY model: ${err.message}`);
       debugLogger.log('info', 'Falling back to box placeholders');
       createBoxWings();
     }
@@ -411,16 +392,26 @@ async function renderLoop() {
             rightShoulder.x - leftShoulder.x
           );
 
-          if (CAMERA_MODE === 'user') {
-            positionWingGluedToBack(leftWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
-            positionWingGluedToBack(rightWing, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'right');
+          // Position combined wings on back
+          if (USE_PLY_MODEL) {
+            positionCombinedWingsOnBack(wingsPlyMesh, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle);
           } else {
-            positionWingGluedToBack(leftWing, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
-            positionWingGluedToBack(rightWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'right');
+            // Position separate box wings
+            if (CAMERA_MODE === 'user') {
+              positionWingGluedToBack(leftWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
+              positionWingGluedToBack(rightWing, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'right');
+            } else {
+              positionWingGluedToBack(leftWing, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'left');
+              positionWingGluedToBack(rightWing, rightShoulder, leftShoulder, spineCenter, depth, scale, shoulderAngle, shoulderDist, 'right');
+            }
           }
 
-          leftWing.visible = true;
-          rightWing.visible = true;
+          if (USE_PLY_MODEL) {
+            wingsPlyMesh.visible = true;
+          } else {
+            leftWing.visible = true;
+            rightWing.visible = true;
+          }
 
           debugLogger.updatePoseStatus(`Detected (${leftShoulder.score.toFixed(2)})`);
 
@@ -428,14 +419,22 @@ async function renderLoop() {
           if (leftHip && rightHip) debugPoints.push(leftHip, rightHip);
           drawDebugPoints(ctx, debugPoints);
         } else {
-          leftWing.visible = false;
-          rightWing.visible = false;
+          if (USE_PLY_MODEL) {
+            wingsPlyMesh.visible = false;
+          } else {
+            leftWing.visible = false;
+            rightWing.visible = false;
+          }
           debugLogger.updatePoseStatus('Low confidence');
           baseShoulderDistance = null;
         }
       } else {
-        leftWing.visible = false;
-        rightWing.visible = false;
+        if (USE_PLY_MODEL) {
+          wingsPlyMesh.visible = false;
+        } else {
+          leftWing.visible = false;
+          rightWing.visible = false;
+        }
         debugLogger.updatePoseStatus('No person detected');
         baseShoulderDistance = null;
       }
@@ -448,7 +447,53 @@ async function renderLoop() {
   ctx.drawImage(renderer.domElement, 0, 0);
 }
 
-// === POSITION WING GLUED TO BACK ===
+// === POSITION COMBINED WINGS ON BACK (single mesh with both wings) ===
+function positionCombinedWingsOnBack(wings, leftShoulder, rightShoulder, spineCenter, depth, scale, shoulderAngle) {
+  // Convert spine center to normalized coordinates
+  let spineCenterX = (spineCenter.x / video.videoWidth) * 2 - 1;
+  let spineCenterY = -(spineCenter.y / video.videoHeight) * 2 + 1;
+
+  if (CAMERA_MODE === 'user') {
+    spineCenterX = -spineCenterX;
+  }
+
+  // Position wings centered on upper back/spine
+  const downwardShift = 0.1 * scale; // Adjust to position on shoulder blades
+  
+  const targetX = spineCenterX;
+  const targetY = spineCenterY - downwardShift;
+  const targetZ = depth - (0.3 * scale); // Behind the body
+
+  // Apply smoothing
+  smoothedWingsPos.x = smoothedWingsPos.x + (targetX - smoothedWingsPos.x) * SMOOTHING_FACTOR;
+  smoothedWingsPos.y = smoothedWingsPos.y + (targetY - smoothedWingsPos.y) * SMOOTHING_FACTOR;
+  smoothedWingsPos.z = smoothedWingsPos.z + (targetZ - smoothedWingsPos.z) * SMOOTHING_FACTOR;
+
+  wings.position.set(smoothedWingsPos.x, smoothedWingsPos.y, smoothedWingsPos.z);
+  
+  // Scale the combined wings model
+  wings.scale.set(scale * 0.002, scale * 0.002, scale * 0.002); // Adjust multiplier based on your model size
+
+  // Rotation to follow body orientation
+  const baseRotX = -0.2; // Slight forward tilt
+  const baseRotY = 0; // No base Y rotation for centered wings
+  const baseRotZ = 0;
+
+  // Apply body rotation
+  const bodyRotationInfluence = CAMERA_MODE === 'user' ? -shoulderAngle : shoulderAngle;
+  const targetRotX = baseRotX;
+  const targetRotY = baseRotY + (bodyRotationInfluence * 0.5);
+  const targetRotZ = baseRotZ + (bodyRotationInfluence * 0.2);
+
+  // Apply smoothing to rotation
+  smoothedWingsRot.x = smoothedWingsRot.x + (targetRotX - smoothedWingsRot.x) * SMOOTHING_FACTOR;
+  smoothedWingsRot.y = smoothedWingsRot.y + (targetRotY - smoothedWingsRot.y) * SMOOTHING_FACTOR;
+  smoothedWingsRot.z = smoothedWingsRot.z + (targetRotZ - smoothedWingsRot.z) * SMOOTHING_FACTOR;
+  
+  wings.rotation.set(smoothedWingsRot.x, smoothedWingsRot.y, smoothedWingsRot.z);
+}
+
+// === POSITION WING GLUED TO BACK (for box placeholders) ===
 function positionWingGluedToBack(wing, thisShoulder, otherShoulder, spineCenter, depth, scale, shoulderAngle, currentShoulderDist, side) {
   let shoulderX = (thisShoulder.x / video.videoWidth) * 2 - 1;
   let shoulderY = -(thisShoulder.y / video.videoHeight) * 2 + 1;
@@ -481,13 +526,7 @@ function positionWingGluedToBack(wing, thisShoulder, otherShoulder, spineCenter,
   smoothedPos.z = smoothedPos.z + (targetZ - smoothedPos.z) * SMOOTHING_FACTOR;
 
   wing.position.set(smoothedPos.x, smoothedPos.y, smoothedPos.z);
-  
-  // Scale differently for PLY models vs boxes
-  if (USE_PLY_MODEL) {
-    wing.scale.set(scale * 0.1, scale * 0.1, scale * 0.1); // PLY models might need different scaling
-  } else {
-    wing.scale.set(scale * 0.8, scale * 1.2, scale * 0.6);
-  }
+  wing.scale.set(scale * 0.8, scale * 1.2, scale * 0.6);
 
   const baseRotY = side === 'left' ? 0.5 : -0.5;
   const baseRotX = -0.2;
