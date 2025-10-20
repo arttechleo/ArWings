@@ -1,5 +1,10 @@
-// AR Back Wings — Spark Gaussian Splat version (FULL FILE)
-// --------------------------------------------------------
+// AR Back Wings — Spark Gaussian Splat version (FINAL, sanity-checked)
+// -------------------------------------------------------------------
+// Notes:
+// - Requires index.html import map that points to pose-detection.esm.js (ESM build).
+// - Forces Pose Detection runtime to 'tfjs' so no @mediapipe/pose mapping is needed.
+// - Draws Three.js (Spark Splat) into a WebGL canvas, then composites onto a 2D canvas.
+// - Includes robust guards & debug logs to help diagnose issues quickly.
 
 import * as THREE from 'three';
 import { SplatMesh /*, SparkRenderer*/ } from '@sparkjsdev/spark';
@@ -7,7 +12,7 @@ import * as tf from '@tensorflow/tfjs';
 import * as poseDetection from '@tensorflow-models/pose-detection';
 
 // --------------------- Config --------------------------
-const SPLAT_PATH = 'assets/wings.spz'; // your .spz (works now)
+const SPLAT_PATH = 'assets/wings.spz'; // If your file name/path differs, change this.
 const CAMERA_MODE = 'environment';     // 'environment' | 'user'
 const MIN_SHOULDER_SCORE = 0.4;
 const SMOOTHING_FACTOR = 0.4;
@@ -48,7 +53,9 @@ class DebugLogger {
       panel.classList.toggle('minimized');
       toggleBtn.textContent = panel.classList.contains('minimized') ? '＋' : '−';
     });
-    clearBtn.addEventListener('click', () => { if (this.logsContainer) this.logsContainer.innerHTML = ''; });
+    clearBtn.addEventListener('click', () => {
+      if (this.logsContainer) this.logsContainer.innerHTML = '';
+    });
   }
   log(type, message) {
     const ts = new Date().toLocaleTimeString();
@@ -79,13 +86,18 @@ window.addEventListener('DOMContentLoaded', () => {
   const startBtn = document.getElementById('start-btn');
   const instructions = document.getElementById('instructions');
 
+  if (!startBtn || !instructions) {
+    console.error('Missing UI elements: #start-btn or #instructions');
+    return;
+  }
+
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
     try {
       instructions.classList.add('hidden');
       await startAR();
     } catch (e) {
-      debugLogger.log('error', `Start failed: ${e.message}`);
+      debugLogger.log('error', `Start failed: ${e?.message ?? e}`);
       instructions.classList.remove('hidden');
       startBtn.disabled = false;
     }
@@ -96,18 +108,27 @@ window.addEventListener('DOMContentLoaded', () => {
 async function startAR() {
   debugLogger.updateStatus('status', 'Starting…');
 
+  // Security check for getUserMedia
+  if (!window.isSecureContext) {
+    throw new Error('This page is not in a secure context. Use HTTPS or http://localhost for camera access.');
+  }
+
   // Choose TFJS backend
   try {
     await tf.setBackend('webgl');
     await tf.ready();
     debugLogger.log('success', `TFJS backend: ${tf.getBackend()}`);
   } catch (e) {
-    debugLogger.log('warning', `TFJS backend fallback: ${e.message}`);
+    debugLogger.log('warning', `TFJS backend fallback: ${e?.message ?? e}`);
   }
 
   canvas = document.getElementById('output-canvas');
-  ctx = canvas.getContext('2d', { alpha: true });
+  ctx = canvas?.getContext('2d', { alpha: true });
   video = document.getElementById('video');
+
+  if (!canvas || !ctx || !video) {
+    throw new Error('Missing required DOM elements (#output-canvas, #video).');
+  }
 
   // Camera stream
   try {
@@ -121,36 +142,54 @@ async function startAR() {
     });
     video.srcObject = stream;
   } catch (e) {
-    debugLogger.log('error', `getUserMedia error: ${e.message}`);
+    debugLogger.log('error', `getUserMedia error: ${e?.message ?? e}`);
     debugLogger.updateStatus('video', '❌ Permission denied');
     throw e;
   }
 
-  await new Promise(resolve => video.onloadedmetadata = () => { video.play(); resolve(); });
+  await new Promise(resolve => {
+    video.onloadedmetadata = () => { video.play(); resolve(); };
+  });
   debugLogger.updateStatus('video', `✅ ${video.videoWidth}x${video.videoHeight}`);
 
   // Sizing
   resizeToVideo();
   window.addEventListener('resize', resizeToVideo);
+  window.addEventListener('orientationchange', () => setTimeout(resizeToVideo, 200));
 
   // Three.js + Spark
   await setupThree();
 
-  // Pose model (guard ensures ESM is loaded)
+  // -------- Pose model (force runtime:'tfjs' to avoid @mediapipe/pose) --------
   debugLogger.log('info', '🧠 Loading Pose Detection model…');
-  if (!poseDetection?.movenet?.modelType) {
-    throw new Error('poseDetection.movenet is not available — make sure the import map points to pose-detection.esm.js');
+
+  // Guard: ensure ESM build exported movenet
+  if (!poseDetection?.movenet?.modelType || !poseDetection?.SupportedModels?.MoveNet) {
+    throw new Error('pose-detection ESM not loaded: ensure import map points to pose-detection.esm.js');
   }
-  const detectorConfig = { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING };
-  poseModel = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, detectorConfig);
-  debugLogger.updateStatus('model', '✅ MoveNet loaded');
+
+  const detectorConfig = {
+    runtime: 'tfjs', // ⭐ prevents @mediapipe/pose bare specifier usage
+    modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+  };
+
+  try {
+    poseModel = await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      detectorConfig
+    );
+    debugLogger.updateStatus('model', '✅ MoveNet loaded');
+  } catch (e) {
+    debugLogger.log('error', `createDetector failed: ${e?.message ?? e}`);
+    throw e;
+  }
 
   isRunning = true;
   renderLoop();
 }
 
 function resizeToVideo() {
-  if (!video) return;
+  if (!video || !canvas) return;
   const w = video.videoWidth || 1280;
   const h = video.videoHeight || 720;
   const dpr = window.devicePixelRatio || 1;
@@ -166,6 +205,8 @@ function resizeToVideo() {
     renderer.setPixelRatio(dpr);
     renderer.setSize(canvas.width, canvas.height, false);
   }
+
+  debugLogger.log('info', `Canvas set to ${canvas.width}×${canvas.height} (CSS ${w}×${h}) DPR ${dpr}`);
 }
 
 // -------------------- Three + Spark -------------------
@@ -174,7 +215,7 @@ async function setupThree() {
 
   renderer = new THREE.WebGLRenderer({
     alpha: true,
-    antialias: false,
+    antialias: false,                // splats don't benefit; improves perf
     preserveDrawingBuffer: true,
     powerPreference: 'high-performance'
   });
@@ -185,7 +226,7 @@ async function setupThree() {
   camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000);
   camera.position.set(0, 0, 0);
 
-  // Optional: SparkRenderer for DOF, etc.
+  // Optional: SparkRenderer for DOF/post effects
   // const spark = new SparkRenderer({ renderer });
   // camera.add(spark);
 
@@ -212,7 +253,7 @@ async function setupThree() {
     debugLogger.log('success', `Splat ready — size: ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}`);
   } catch (err) {
     debugLogger.updateStatus('asset', '❌ Load failed');
-    debugLogger.log('error', `Splat load error: ${err.message} | URL tried: ${SPLAT_PATH}`);
+    debugLogger.log('error', `Splat load error: ${err?.message ?? err} | URL tried: ${SPLAT_PATH}`);
   }
 }
 
@@ -260,12 +301,14 @@ async function renderLoop() {
       }
     }
   } catch (e) {
-    debugLogger.log('warning', `Pose estimate warning: ${e.message}`);
+    debugLogger.log('warning', `Pose estimate warning: ${e?.message ?? e}`);
   }
 
   // Render 3D to WebGL canvas, then composite to 2D
-  renderer.render(scene, camera);
-  ctx.drawImage(renderer.domElement, 0, 0);
+  if (renderer && camera) {
+    renderer.render(scene, camera);
+    ctx.drawImage(renderer.domElement, 0, 0);
+  }
 }
 
 // ----------- Pose → Splat transform (core) -------------
@@ -273,7 +316,7 @@ function applyPoseToSplat(ls, rs, splat) {
   // Shoulder distance & angle in screen space
   const dx = rs.x - ls.x;
   const dy = rs.y - ls.y;
-  const dist = Math.hypot(dx, dy);
+  const dist = Math.hypot(dx, dy) || 1e-6; // prevent div-by-zero
   const angle = Math.atan2(dy, dx);
 
   // Upper-back anchor (slightly below shoulder mid-point)
@@ -291,7 +334,7 @@ function applyPoseToSplat(ls, rs, splat) {
   const target = new THREE.Vector3(nx, ny, 0.5);
   target.unproject(camera);
   const dir = target.sub(camera.position).normalize();
-  const distance = Math.abs(depth / dir.z);
+  const distance = Math.abs(depth / (dir.z || 1e-6)); // avoid div-by-zero
   const world = camera.position.clone().add(dir.multiplyScalar(distance));
 
   // Smooth position
