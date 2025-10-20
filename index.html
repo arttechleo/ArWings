@@ -1,463 +1,59 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <title>AR Back Wings</title>
-  <link rel="icon" href="data:," />
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { 
-      font-family: system-ui, -apple-system, sans-serif; 
-      overflow: hidden;
-      user-select: none;
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>AR Back Wings (Gaussian Splatting)</title>
+    
+    <link rel="stylesheet" href="style.css">
+
+    <script type="importmap">
+{
+    "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        
+        "three-gaussian-splat": "https://cdn.jsdelivr.net/npm/three-gaussian-splat@1.2.0/dist/three-gaussian-splat.module.js",
+        
+        "@tensorflow/tfjs": "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.es2017.js",
+        "@tensorflow-models/pose-detection": "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.js"
     }
-    
-    #output-canvas {
-      position: fixed;
-      top: 0; left: 0;
-      width: 100vw; height: 100vh;
-      z-index: 1;
-    }
-    
-    #video { display: none; }
-    
-    #instructions {
-      position: fixed; inset: 0;
-      display: grid; place-items: center;
-      background: rgba(0,0,0,0.95);
-      z-index: 1000;
-      transition: opacity .3s ease;
-    }
-    #instructions.hidden { opacity: 0; pointer-events: none; }
-    #instructions-content { text-align: center; color: #fff; padding: 20px; max-width: 420px; }
-    #instructions-content h2 { font-size: 28px; margin-bottom: 16px; color: #00ff88; }
-    #instructions-content p { font-size: 16px; margin-bottom: 20px; line-height: 1.6; color: #ccc; }
-    #instructions-content p.small { font-size: 12px; opacity: .7; margin-top: 8px; }
-    
-    #start-btn {
-      background: linear-gradient(135deg, #00ff88, #00ccff);
-      color: #000; border: none; padding: 14px 36px;
-      font-size: 18px; font-weight: 700; border-radius: 999px; cursor: pointer;
-      box-shadow: 0 6px 18px rgba(0,255,136,.35);
-      transition: transform .2s, box-shadow .2s, filter .2s;
-    }
-    #start-btn:hover { filter: brightness(1.1); }
-    #start-btn:active { transform: scale(.96); box-shadow: 0 3px 12px rgba(0,255,136,.25); }
-    
-    #debug-panel {
-      position: fixed; bottom: 10px; left: 10px;
-      width: 320px; max-height: 40vh;
-      background: rgba(0,0,0,.85);
-      border: 1px solid rgba(0,255,136,.5);
-      border-radius: 10px; color: #00ff88;
-      font-family: 'Courier New', monospace; font-size: 11px; z-index: 100;
-      overflow: hidden; backdrop-filter: blur(10px);
-    }
-    #debug-panel.minimized #debug-content { display: none; }
-    
-    #debug-header {
-      background: rgba(0,255,136,.15);
-      padding: 8px 10px; display: flex; justify-content: space-between; align-items: center;
-      border-bottom: 1px solid rgba(0,255,136,.3);
-    }
-    #debug-header h3 { margin: 0; font-size: 12px; flex: 1; color: #00ff88; }
-    #debug-header button {
-      background: rgba(0,255,136,.2); color: #00ff88;
-      border: 1px solid rgba(0,255,136,.4);
-      padding: 4px 8px; margin-left: 6px; border-radius: 6px; cursor: pointer;
-      font-size: 10px; font-weight: 700; font-family: 'Courier New', monospace;
-    }
-    #debug-header button:active { background: rgba(0,255,136,.3); }
-    
-    #debug-content { padding: 10px; max-height: 35vh; overflow-y: auto; }
-    #debug-status { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(0,255,136,.2); }
-    #debug-status div { margin: 4px 0; line-height: 1.4; font-size: 10px; }
-    #debug-status strong { color: #ffff00; }
-    
-    #debug-logs { font-size: 10px; line-height: 1.4; }
-    .debug-log { margin: 4px 0; padding: 4px 6px; border-left: 2px solid #00ff88; word-wrap: break-word; }
-    .debug-log.error { border-left-color: #ff3366; color: #ff6688; }
-    .debug-log.warning { border-left-color: #ffaa00; color: #ffcc66; }
-    .debug-log.info { border-left-color: #00aaff; color: #66ccff; }
-    .debug-log.success { border-left-color: #00ff88; color: #88ffaa; }
-    .debug-timestamp { color: #666; font-size: 9px; margin-right: 4px; }
-    
-    #debug-content::-webkit-scrollbar { width: 6px; }
-    #debug-content::-webkit-scrollbar-track { background: rgba(0,0,0,.3); }
-    #debug-content::-webkit-scrollbar-thumb { background: rgba(0,255,136,.5); border-radius: 3px; }
-    
-    @media (max-width: 480px) {
-      #debug-panel { width: calc(100vw - 20px); left: 10px; right: 10px; bottom: 10px; }
-      #instructions-content h2 { font-size: 24px; }
-      #instructions-content p { font-size: 14px; }
-      #start-btn { padding: 12px 30px; font-size: 16px; }
-    }
-    
-    @media (orientation: landscape) and (max-height: 500px) {
-      #debug-panel { max-height: 30vh; }
-      #instructions-content h2 { font-size: 20px; margin-bottom: 10px; }
-      #instructions-content p { font-size: 13px; margin-bottom: 15px; }
-    }
-  </style>
+}
+</script>
 </head>
 <body>
-  <canvas id="output-canvas"></canvas>
-  <video id="video" autoplay playsinline webkit-playsinline muted></video>
-  
-  <div id="instructions">
-    <div id="instructions-content">
-      <h2>📱 AR Back Wings</h2>
-      <p>Point your camera at someone's back, then tap Start.</p>
-      <button id="start-btn">Start AR Experience</button>
-      <p class="small">If nothing shows, allow camera access. On iOS use Safari and keep the tab in the foreground.</p>
+    <canvas id="output-canvas"></canvas>
+    
+    <video id="video" autoplay playsinline></video>
+
+    <div id="instructions">
+        <div id="instructions-content">
+            <h2>📱 AR Back Wings</h2>
+            <p>Point camera at someone's back!</p>
+            <button id="start-btn">Start AR Experience</button>
+        </div>
     </div>
-  </div>
-  
-  <div id="debug-panel">
-    <div id="debug-header">
-      <h3>Debug</h3>
-      <button id="toggle-debug">−</button>
-      <button id="clear-debug">Clear</button>
+
+    <div id="debug-panel">
+        <div id="debug-header">
+            <h3>Debug</h3>
+            <button id="toggle-debug">−</button>
+            <button id="clear-debug">Clear</button>
+        </div>
+        <div id="debug-content">
+            <div id="debug-status">
+                <div><strong>Status:</strong> <span id="status-text">Loading...</span></div>
+                <div><strong>Camera:</strong> <span id="video-status">Not started</span></div>
+                <div><strong>Model:</strong> <span id="model-status">Not loaded</span></div>
+                <div><strong>Shoulders:</strong> <span id="pose-status">Not detected</span></div>
+                <div><strong>Asset:</strong> <span id="asset-status">Loading splat...</span></div>
+                <div><strong>FPS:</strong> <span id="fps-counter">0</span></div>
+            </div>
+            <div id="debug-logs"></div>
+        </div>
     </div>
-    <div id="debug-content">
-      <div id="debug-status">
-        <div><strong>Status:</strong> <span id="status-status">Idle</span></div>
-        <div><strong>Camera:</strong> <span id="video-status">Not started</span></div>
-        <div><strong>Model:</strong> <span id="model-status">Not loaded</span></div>
-        <div><strong>Shoulders:</strong> <span id="pose-status">Not detected</span></div>
-        <div><strong>Asset:</strong> <span id="asset-status">Not loaded</span></div>
-        <div><strong>FPS:</strong> <span id="fps-counter">0</span></div>
-      </div>
-      <div id="debug-logs"></div>
-    </div>
-  </div>
 
-  <script type="module">
-    import * as THREE from 'https://esm.sh/three@0.178.0';
-    import { SplatMesh } from 'https://esm.sh/@sparkjsdev/spark@0.1.9?deps=three@0.178.0';
-    import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js';
-
-    await import('https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js');
-    const poseDetection = window.poseDetection;
-
-    const SPLAT_PATH = 'https://storage.googleapis.com/splat-samples/wings.spz';
-    const CAMERA_MODE = 'environment';
-    const MIN_SHOULDER_SCORE = 0.4;
-    const SMOOTHING_FACTOR = 0.4;
-
-    let scene, camera, renderer;
-    let video, canvas, ctx;
-    let poseModel;
-    let isRunning = false;
-
-    let frameCount = 0;
-    let lastFpsUpdate = performance.now();
-
-    let wingsMesh = null;
-    let splatLoaded = false;
-    let splatBoundingBoxSize = null;
-
-    const smoothedWingsPos = new THREE.Vector3();
-    const smoothedWingsRot = new THREE.Euler();
-
-    let debugLogger;
-
-    class DebugLogger {
-      constructor() {
-        this.logsContainer = document.getElementById('debug-logs');
-        this.statusText = document.getElementById('status-text');
-        this.fpsCounter = document.getElementById('fps-counter');
-        this.maxLogs = 60;
-        this.setupControls();
-      }
-      setupControls() {
-        const toggleBtn = document.getElementById('toggle-debug');
-        const clearBtn = document.getElementById('clear-debug');
-        const panel = document.getElementById('debug-panel');
-        if (!toggleBtn || !clearBtn || !panel) return;
-        toggleBtn.addEventListener('click', () => {
-          panel.classList.toggle('minimized');
-          toggleBtn.textContent = panel.classList.contains('minimized') ? '＋' : '−';
-        });
-        clearBtn.addEventListener('click', () => {
-          if (this.logsContainer) this.logsContainer.innerHTML = '';
-        });
-      }
-      log(type, message) {
-        const ts = new Date().toLocaleTimeString();
-        const div = document.createElement('div');
-        div.className = `debug-log ${type}`;
-        div.innerHTML = `<span class="debug-timestamp">[${ts}]</span> ${message}`;
-        if (this.logsContainer) {
-          this.logsContainer.insertBefore(div, this.logsContainer.firstChild);
-          while (this.logsContainer.children.length > this.maxLogs) {
-            this.logsContainer.removeChild(this.logsContainer.lastChild);
-          }
-        }
-        const method = type === 'error' ? 'error' : (type === 'warning' ? 'warn' : 'log');
-        console[method](`[${type}] ${message}`);
-      }
-      updateStatus(key, value) {
-        const el = document.getElementById(`${key}-status`);
-        if (el) el.textContent = value;
-      }
-      updateFPS(fps) { if (this.fpsCounter) this.fpsCounter.textContent = fps.toFixed(1); }
-    }
-
-    window.addEventListener('DOMContentLoaded', () => {
-      debugLogger = new DebugLogger();
-      debugLogger.log('info', '🚀 AR Gaussian Splat Wings Initializing...');
-
-      const startBtn = document.getElementById('start-btn');
-      const instructions = document.getElementById('instructions');
-
-      if (!startBtn || !instructions) {
-        console.error('Missing UI elements: #start-btn or #instructions');
-        return;
-      }
-
-      startBtn.addEventListener('click', async () => {
-        startBtn.disabled = true;
-        try {
-          instructions.classList.add('hidden');
-          await startAR();
-        } catch (e) {
-          debugLogger.log('error', `Start failed: ${e?.message ?? e}`);
-          instructions.classList.remove('hidden');
-          startBtn.disabled = false;
-        }
-      });
-    });
-
-    async function startAR() {
-      debugLogger.updateStatus('status', 'Starting…');
-
-      video = document.getElementById('video');
-      video.setAttribute('playsinline', 'true');
-      video.setAttribute('webkit-playsinline', 'true');
-      video.muted = true;
-
-      if (!window.isSecureContext) {
-        throw new Error('This page is not in a secure context. Use HTTPS or http://localhost for camera access.');
-      }
-
-      try {
-        await tf.setBackend('webgl');
-        await tf.ready();
-        debugLogger.log('success', `TFJS backend: ${tf.getBackend()}`);
-      } catch (e) {
-        debugLogger.log('warning', `TFJS backend fallback: ${e?.message ?? e}`);
-      }
-
-      canvas = document.getElementById('output-canvas');
-      ctx = canvas.getContext('2d', { alpha: true });
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: CAMERA_MODE,
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
-        });
-        video.srcObject = stream;
-        await video.play();
-      } catch (e) {
-        debugLogger.log('error', `getUserMedia error: ${e?.message ?? e}`);
-        debugLogger.updateStatus('video', '❌ Permission / camera error');
-        throw e;
-      }
-
-      await new Promise(resolve => {
-        if (video.readyState >= 2) return resolve();
-        video.onloadedmetadata = () => resolve();
-      });
-      debugLogger.updateStatus('video', `✅ ${video.videoWidth}x${video.videoHeight}`);
-
-      resizeToVideo();
-      window.addEventListener('resize', resizeToVideo);
-      window.addEventListener('orientationchange', () => setTimeout(resizeToVideo, 200));
-
-      await setupThree();
-
-      debugLogger.log('info', '🧠 Loading Pose Detection model…');
-      if (!poseDetection?.movenet?.modelType || !poseDetection?.SupportedModels?.MoveNet) {
-        throw new Error('pose-detection ESM failed to load (Safari). Check the CDN URL in script imports.');
-      }
-
-      const detectorConfig = {
-        runtime: 'tfjs',
-        modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
-      };
-
-      try {
-        poseModel = await poseDetection.createDetector(
-          poseDetection.SupportedModels.MoveNet,
-          detectorConfig
-        );
-        debugLogger.updateStatus('model', '✅ MoveNet loaded');
-      } catch (e) {
-        debugLogger.log('error', `createDetector failed: ${e?.message ?? e}`);
-        throw e;
-      }
-
-      isRunning = true;
-      renderLoop();
-    }
-
-    function resizeToVideo() {
-      if (!video || !canvas) return;
-      const w = video.videoWidth || 1280;
-      const h = video.videoHeight || 720;
-      const dpr = window.devicePixelRatio || 1;
-
-      canvas.width = Math.floor(w * dpr);
-      canvas.height = Math.floor(h * dpr);
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-
-      if (renderer && camera) {
-        camera.aspect = w / h;
-        camera.updateProjectionMatrix();
-        renderer.setPixelRatio(dpr);
-        renderer.setSize(canvas.width, canvas.height, false);
-      }
-
-      debugLogger.log('info', `Canvas ${canvas.width}×${canvas.height} (CSS ${w}×${h}) DPR ${dpr}`);
-    }
-
-    async function setupThree() {
-      debugLogger.log('info', '🎨 Setting up Three.js scene…');
-
-      renderer = new THREE.WebGLRenderer({
-        alpha: true,
-        antialias: false,
-        preserveDrawingBuffer: true,
-        powerPreference: 'high-performance'
-      });
-      renderer.setPixelRatio(window.devicePixelRatio || 1);
-      renderer.setSize(canvas.width, canvas.height, false);
-
-      scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000);
-      camera.position.set(0, 0, 0);
-
-      debugLogger.log('info', `🌟 Loading Spark splat: ${SPLAT_PATH}`);
-      debugLogger.updateStatus('asset', 'Loading…');
-
-      try {
-        wingsMesh = new SplatMesh({ url: SPLAT_PATH });
-        scene.add(wingsMesh);
-
-        await wingsMesh.initialized;
-
-        const bbox = wingsMesh.getBoundingBox(true);
-        const size = new THREE.Vector3();
-        bbox.getSize(size);
-        splatBoundingBoxSize = size;
-
-        wingsMesh.visible = false;
-        splatLoaded = true;
-
-        debugLogger.updateStatus('asset', '✅ Loaded');
-        debugLogger.log('success', `Splat size: ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}`);
-      } catch (err) {
-        debugLogger.updateStatus('asset', '❌ Load failed');
-        debugLogger.log('error', `Splat load error: ${err?.message ?? err} | URL: ${SPLAT_PATH}`);
-      }
-    }
-
-    async function renderLoop() {
-      if (!isRunning) return;
-      requestAnimationFrame(renderLoop);
-
-      frameCount++;
-      const now = performance.now();
-      if (now - lastFpsUpdate >= 1000) {
-        debugLogger.updateFPS(frameCount);
-        frameCount = 0;
-        lastFpsUpdate = now;
-      }
-
-      ctx.save();
-      if (CAMERA_MODE === 'user') ctx.scale(-1, 1);
-      const drawX = CAMERA_MODE === 'user' ? -canvas.width : 0;
-      ctx.drawImage(video, drawX, 0, canvas.width, canvas.height);
-      ctx.restore();
-
-      try {
-        if (poseModel && video.readyState === video.HAVE_ENOUGH_DATA) {
-          const poses = await poseModel.estimatePoses(video);
-          const pose = poses?.[0];
-          const ls = pose?.keypoints?.find(k => k.name === 'left_shoulder');
-          const rs = pose?.keypoints?.find(k => k.name === 'right_shoulder');
-
-          if (ls && rs && ls.score > MIN_SHOULDER_SCORE && rs.score > MIN_SHOULDER_SCORE) {
-            debugLogger.updateStatus('pose', '✅ Pose detected');
-            if (splatLoaded && wingsMesh) {
-              applyPoseToSplat(ls, rs, wingsMesh);
-              if (!wingsMesh.visible) {
-                wingsMesh.visible = true;
-                debugLogger.log('success', '👁️ Wings visible');
-              }
-            }
-          } else {
-            if (wingsMesh) wingsMesh.visible = false;
-            debugLogger.updateStatus('pose', '❌ No pose / low confidence');
-          }
-        }
-      } catch (e) {
-        debugLogger.log('warning', `Pose estimate warning: ${e?.message ?? e}`);
-      }
-
-      if (renderer && camera) {
-        renderer.render(scene, camera);
-        ctx.drawImage(renderer.domElement, 0, 0);
-      }
-    }
-
-    function applyPoseToSplat(ls, rs, splat) {
-      const dx = rs.x - ls.x;
-      const dy = rs.y - ls.y;
-      const dist = Math.hypot(dx, dy) || 1e-6;
-      const angle = Math.atan2(dy, dx);
-
-      const spine = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 + dist * 0.15 };
-
-      const depth = -2.0 - (150 / Math.max(1, dist));
-      let scale = Math.max(0.5, dist / 150);
-
-      let nx = (spine.x / video.videoWidth) * 2 - 1;
-      let ny = -(spine.y / video.videoHeight) * 2 + 1;
-      if (CAMERA_MODE === 'user') nx = -nx;
-
-      const target = new THREE.Vector3(nx, ny, 0.5);
-      target.unproject(camera);
-      const dir = target.sub(camera.position).normalize();
-      const distance = Math.abs(depth / (dir.z || 1e-6));
-      const world = camera.position.clone().add(dir.multiplyScalar(distance));
-
-      smoothedWingsPos.lerp(world, SMOOTHING_FACTOR);
-      splat.position.copy(smoothedWingsPos);
-
-      let scaleFactor = scale * 0.5;
-      if (splatBoundingBoxSize) {
-        const avg = (splatBoundingBoxSize.x + splatBoundingBoxSize.y + splatBoundingBoxSize.z) / 3;
-        if (avg > 0) scaleFactor = (1.5 / avg) * scale;
-      }
-      if (!Number.isFinite(scaleFactor) || scaleFactor <= 0) scaleFactor = 1.0;
-      splat.scale.setScalar(scaleFactor);
-
-      const bodyRot = (CAMERA_MODE === 'user') ? -angle : angle;
-      smoothedWingsRot.x += (-0.2 - smoothedWingsRot.x) * SMOOTHING_FACTOR;
-      smoothedWingsRot.y += (bodyRot * 0.5 - smoothedWingsRot.y) * SMOOTHING_FACTOR;
-      smoothedWingsRot.z += (bodyRot * 0.2 - smoothedWingsRot.z) * SMOOTHING_FACTOR;
-      splat.rotation.copy(smoothedWingsRot);
-    }
-  </script>
+    <script type="module" src="script.js"></script>
 </body>
 </html>
