@@ -8,31 +8,19 @@
   <title>AR Back Wings</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="icon" href="data:," />
-
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js",
-      "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.9/spark.module.js",
-      "@tensorflow/tfjs": "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.es2017.js",
-      "@tensorflow-models/pose-detection": "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.esm.js",
-      "@mediapipe/pose": "https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.167/pose.js",
-      "@mediapipe/drawing_utils": "https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.167/drawing_utils.js",
-      "@mediapipe/camera_utils": "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.167/camera_utils.js"
-    }
-  }
-  </script>
 </head>
 <body>
   <canvas id="output-canvas"></canvas>
-  <video id="video" autoplay playsinline></video>
+
+  <!-- Hidden video input (Safari-safe flags) -->
+  <video id="video" autoplay playsinline webkit-playsinline muted></video>
 
   <div id="instructions">
     <div id="instructions-content">
       <h2>📱 AR Back Wings</h2>
       <p>Point your camera at someone’s back, then tap Start.</p>
       <button id="start-btn">Start AR Experience</button>
-      <p class="small">If nothing shows, allow camera access and try again.</p>
+      <p class="small">If nothing shows, allow camera access. On iOS use Safari and keep the tab in the foreground.</p>
     </div>
   </div>
 
@@ -55,6 +43,7 @@
     </div>
   </div>
 
+  <!-- Direct module import (absolute URLs; no importmap needed) -->
   <script type="module" src="script.js"></script>
 </body>
 </html>
