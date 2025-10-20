@@ -1,9 +1,5 @@
 // AR Back Wings — Spark Gaussian Splat version (FULL FILE)
 // --------------------------------------------------------
-// - Uses Spark SplatMesh with a single URL (prefer .spz for performance)
-// - MoveNet (TFJS) for shoulder tracking
-// - Renders Three.js to a WebGL canvas and composites onto a 2D canvas
-// - Includes robust debug logs + status panel
 
 import * as THREE from 'three';
 import { SplatMesh /*, SparkRenderer*/ } from '@sparkjsdev/spark';
@@ -11,10 +7,10 @@ import * as tf from '@tensorflow/tfjs';
 import * as poseDetection from '@tensorflow-models/pose-detection';
 
 // --------------------- Config --------------------------
-const SPLAT_PATH = 'assets/wings.spz'; // 👈 Path to your Gaussian Splat file (.spz recommended; .ply also works)
+const SPLAT_PATH = 'assets/wings.spz'; // your .spz (works now)
 const CAMERA_MODE = 'environment';     // 'environment' | 'user'
-const MIN_SHOULDER_SCORE = 0.4;        // shoulder keypoint confidence threshold
-const SMOOTHING_FACTOR = 0.4;          // smoothing for pose-driven transforms
+const MIN_SHOULDER_SCORE = 0.4;
+const SMOOTHING_FACTOR = 0.4;
 
 // --------------------- State ---------------------------
 let scene, camera, renderer;
@@ -25,7 +21,7 @@ let isRunning = false;
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
 
-let wingsMesh = null;          // Spark SplatMesh
+let wingsMesh = null;
 let splatLoaded = false;
 let splatBoundingBoxSize = null;
 
@@ -100,7 +96,7 @@ window.addEventListener('DOMContentLoaded', () => {
 async function startAR() {
   debugLogger.updateStatus('status', 'Starting…');
 
-  // Choose best TFJS backend
+  // Choose TFJS backend
   try {
     await tf.setBackend('webgl');
     await tf.ready();
@@ -140,8 +136,11 @@ async function startAR() {
   // Three.js + Spark
   await setupThree();
 
-  // Pose model
+  // Pose model (guard ensures ESM is loaded)
   debugLogger.log('info', '🧠 Loading Pose Detection model…');
+  if (!poseDetection?.movenet?.modelType) {
+    throw new Error('poseDetection.movenet is not available — make sure the import map points to pose-detection.esm.js');
+  }
   const detectorConfig = { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING };
   poseModel = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, detectorConfig);
   debugLogger.updateStatus('model', '✅ MoveNet loaded');
@@ -175,7 +174,7 @@ async function setupThree() {
 
   renderer = new THREE.WebGLRenderer({
     alpha: true,
-    antialias: false,                // better perf; splats don’t benefit
+    antialias: false,
     preserveDrawingBuffer: true,
     powerPreference: 'high-performance'
   });
@@ -186,8 +185,7 @@ async function setupThree() {
   camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000);
   camera.position.set(0, 0, 0);
 
-  // Optional: Spark renderer for big scenes / DOF, etc.
-  // import { SparkRenderer } from '@sparkjsdev/spark';
+  // Optional: SparkRenderer for DOF, etc.
   // const spark = new SparkRenderer({ renderer });
   // camera.add(spark);
 
@@ -199,11 +197,10 @@ async function setupThree() {
     wingsMesh = new SplatMesh({ url: SPLAT_PATH });
     scene.add(wingsMesh);
 
-    // Ensure it’s ready before we read bounds or show it
-    await wingsMesh.initialized;
+    await wingsMesh.initialized; // ensure ready
 
     // Bounding box for scale normalization
-    const bbox = wingsMesh.getBoundingBox(true); // true = use centers only (tighter)
+    const bbox = wingsMesh.getBoundingBox(true); // centers only = tighter
     const size = new THREE.Vector3();
     bbox.getSize(size);
     splatBoundingBoxSize = size;
@@ -215,7 +212,7 @@ async function setupThree() {
     debugLogger.log('success', `Splat ready — size: ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}`);
   } catch (err) {
     debugLogger.updateStatus('asset', '❌ Load failed');
-    debugLogger.log('error', `Splat load error: ${err.message}`);
+    debugLogger.log('error', `Splat load error: ${err.message} | URL tried: ${SPLAT_PATH}`);
   }
 }
 
