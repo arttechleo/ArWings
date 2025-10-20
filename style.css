@@ -1,100 +1,260 @@
-* { margin: 0; padding: 0; box-sizing: border-box; }
-user-select: none;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #000;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  position: fixed;
+  width: 100%;
+  height: 100%;
+  -webkit-user-select: none;
+  user-select: none;
+}
 
-/* Canvas for AR output */
+/* Canvas for AR output (will be the WebGL context) */
 #output-canvas {
-position: fixed;
-top: 0; left: 0;
-width: 100vw; height: 100vh;
-z-index: 1;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1;
 }
-
 
 /* Hidden video element */
-#video { display: none; }
-
+#video {
+  display: none;
+}
 
 /* Instructions Overlay */
 #instructions {
-position: fixed; inset: 0;
-display: grid; place-items: center;
-background: rgba(0,0,0,0.95);
-z-index: 1000;
-transition: opacity .3s ease;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  transition: opacity 0.3s ease;
 }
-#instructions.hidden { opacity: 0; pointer-events: none; }
-#instructions-content { text-align: center; color: #fff; padding: 20px; max-width: 420px; }
-#instructions-content h2 { font-size: 28px; margin-bottom: 16px; color: #00ff88; }
-#instructions-content p { font-size: 16px; margin-bottom: 20px; line-height: 1.6; color: #ccc; }
-#instructions-content p.small { font-size: 12px; opacity: .7; margin-top: 8px; }
-#start-btn {
-background: linear-gradient(135deg, #00ff88, #00ccff);
-color: #000; border: none; padding: 14px 36px;
-font-size: 18px; font-weight: 700; border-radius: 999px; cursor: pointer;
-box-shadow: 0 6px 18px rgba(0,255,136,.35);
-transition: transform .2s, box-shadow .2s, filter .2s;
-}
-#start-btn:hover { filter: brightness(1.1); }
-#start-btn:active { transform: scale(.96); box-shadow: 0 3px 12px rgba(0,255,136,.25); }
 
+#instructions.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#instructions-content {
+  text-align: center;
+  color: white;
+  padding: 20px;
+  max-width: 400px;
+}
+
+#instructions-content h2 {
+  font-size: 28px;
+  margin-bottom: 20px;
+  color: #00ff88;
+}
+
+#instructions-content p {
+  font-size: 16px;
+  margin-bottom: 30px;
+  line-height: 1.6;
+  color: #ccc;
+}
+
+#start-btn {
+  background: linear-gradient(135deg, #00ff88, #00ccff);
+  color: #000;
+  border: none;
+  padding: 15px 40px;
+  font-size: 18px;
+  font-weight: bold;
+  border-radius: 50px;
+  cursor: pointer;
+  box-shadow: 0 4px 15px rgba(0, 255, 136, 0.4);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+#start-btn:active {
+  transform: scale(0.95);
+  box-shadow: 0 2px 10px rgba(0, 255, 136, 0.3);
+}
 
 /* Debug Panel */
 #debug-panel {
-position: fixed; bottom: 10px; left: 10px;
-width: 320px; max-height: 40vh;
-background: rgba(0,0,0,.85);
-border: 1px solid rgba(0,255,136,.5);
-border-radius: 10px; color: #00ff88;
-font-family: 'Courier New', monospace; font-size: 11px; z-index: 100;
-overflow: hidden; backdrop-filter: blur(10px);
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  width: 320px;
+  max-height: 40vh;
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(0, 255, 136, 0.5);
+  border-radius: 8px;
+  color: #00ff88;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  z-index: 100;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
 }
-#debug-panel.minimized #debug-content { display: none; }
-#debug-header {
-background: rgba(0,255,136,.15);
-padding: 8px 10px; display: flex; justify-content: space-between; align-items: center;
-border-bottom: 1px solid rgba(0,255,136,.3);
-}
-#debug-header h3 { margin: 0; font-size: 12px; flex: 1; color: #00ff88; }
-#debug-header button {
-background: rgba(0,255,136,.2); color: #00ff88;
-border: 1px solid rgba(0,255,136,.4);
-padding: 4px 8px; margin-left: 6px; border-radius: 6px; cursor: pointer;
-font-size: 10px; font-weight: 700; font-family: 'Courier New', monospace;
-}
-#debug-header button:active { background: rgba(0,255,136,.3); }
-#debug-content { padding: 10px; max-height: 35vh; overflow-y: auto; }
-#debug-status { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(0,255,136,.2); }
-#debug-status div { margin: 4px 0; line-height: 1.4; font-size: 10px; }
-#debug-status strong { color: #ffff00; }
-#debug-logs { font-size: 10px; line-height: 1.4; }
-.debug-log { margin: 4px 0; padding: 4px 6px; border-left: 2px solid #00ff88; word-wrap: break-word; }
-.debug-log.error { border-left-color: #ff3366; color: #ff6688; }
-.debug-log.warning { border-left-color: #ffaa00; color: #ffcc66; }
-.debug-log.info { border-left-color: #00aaff; color: #66ccff; }
-.debug-log.success { border-left-color: #00ff88; color: #88ffaa; }
-.debug-timestamp { color: #666; font-size: 9px; margin-right: 4px; }
 
+#debug-panel.minimized #debug-content {
+  display: none;
+}
+
+#debug-header {
+  background: rgba(0, 255, 136, 0.15);
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(0, 255, 136, 0.3);
+}
+
+#debug-header h3 {
+  margin: 0;
+  font-size: 12px;
+  flex: 1;
+  color: #00ff88;
+}
+
+#debug-header button {
+  background: rgba(0, 255, 136, 0.2);
+  color: #00ff88;
+  border: 1px solid rgba(0, 255, 136, 0.4);
+  padding: 4px 8px;
+  margin-left: 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: bold;
+  font-family: 'Courier New', monospace;
+}
+
+#debug-header button:active {
+  background: rgba(0, 255, 136, 0.3);
+}
+
+#debug-content {
+  padding: 10px;
+  max-height: 35vh;
+  overflow-y: auto;
+}
+
+#debug-status {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(0, 255, 136, 0.2);
+}
+
+#debug-status div {
+  margin: 4px 0;
+  line-height: 1.4;
+  font-size: 10px;
+}
+
+#debug-status strong {
+  color: #ffff00;
+}
+
+#debug-logs {
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.debug-log {
+  margin: 4px 0;
+  padding: 4px;
+  border-left: 2px solid #00ff88;
+  padding-left: 6px;
+  word-wrap: break-word;
+}
+
+.debug-log.error {
+  border-left-color: #ff3366;
+  color: #ff6688;
+}
+
+.debug-log.warning {
+  border-left-color: #ffaa00;
+  color: #ffcc66;
+}
+
+.debug-log.info {
+  border-left-color: #00aaff;
+  color: #66ccff;
+}
+
+.debug-log.success {
+  border-left-color: #00ff88;
+  color: #88ffaa;
+}
+
+.debug-timestamp {
+  color: #666;
+  font-size: 9px;
+  margin-right: 4px;
+}
 
 /* Scrollbar */
-#debug-content::-webkit-scrollbar { width: 6px; }
-#debug-content::-webkit-scrollbar-track { background: rgba(0,0,0,.3); }
-#debug-content::-webkit-scrollbar-thumb { background: rgba(0,255,136,.5); border-radius: 3px; }
-
-
-/* Mobile tweaks */
-@media (max-width: 480px) {
-#debug-panel { width: calc(100vw - 20px); left: 10px; right: 10px; bottom: 10px; }
-#instructions-content h2 { font-size: 24px; }
-#instructions-content p { font-size: 14px; }
-#start-btn { padding: 12px 30px; font-size: 16px; }
+#debug-content::-webkit-scrollbar {
+  width: 6px;
 }
 
+#debug-content::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+}
 
-/* Landscape tight height */
+#debug-content::-webkit-scrollbar-thumb {
+  background: rgba(0, 255, 136, 0.5);
+  border-radius: 3px;
+}
+
+/* Mobile adjustments */
+@media (max-width: 480px) {
+  #debug-panel {
+    width: calc(100vw - 20px);
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+  }
+
+  #instructions-content h2 {
+    font-size: 24px;
+  }
+
+  #instructions-content p {
+    font-size: 14px;
+  }
+
+  #start-btn {
+    padding: 12px 30px;
+    font-size: 16px;
+  }
+}
+
+/* Landscape mode */
 @media (orientation: landscape) and (max-height: 500px) {
-#debug-panel { max-height: 30vh; }
-#instructions-content h2 { font-size: 20px; margin-bottom: 10px; }
-#instructions-content p { font-size: 13px; margin-bottom: 15px; }
+  #debug-panel {
+    max-height: 30vh;
+  }
+  
+  #instructions-content h2 {
+    font-size: 20px;
+    margin-bottom: 10px;
+  }
+  
+  #instructions-content p {
+    font-size: 13px;
+    margin-bottom: 15px;
+  }
 }
