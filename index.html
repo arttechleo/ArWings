@@ -7,18 +7,15 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>AR Back Wings</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:," />
 
-  <!-- Import map -->
   <script type="importmap">
   {
     "imports": {
       "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js",
       "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.9/spark.module.js",
-
       "@tensorflow/tfjs": "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.es2017.js",
       "@tensorflow-models/pose-detection": "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.esm.js",
-
-      /* Map MediaPipe bare specifiers used by the ESM build (even if runtime='tfjs') */
       "@mediapipe/pose": "https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.167/pose.js",
       "@mediapipe/drawing_utils": "https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.167/drawing_utils.js",
       "@mediapipe/camera_utils": "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.167/camera_utils.js"
