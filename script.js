@@ -2,9 +2,8 @@
 // -----------------------------------------------------------------
 // Uses absolute URLs for all imports so older Safari versions work.
 // Adds iOS camera flags and user-gesture friendly startup.
-
-import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js';
-import { SplatMesh } from 'https://sparkjs.dev/releases/spark/0.1.9/spark.module.js';
+import * as THREE from 'https://esm.sh/three@0.178.0';
+import { SplatMesh /*, SparkRenderer*/ } from 'https://esm.sh/@sparkjsdev/spark@0.1.9?deps=three@0.178.0';
 import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js';
 
 // Load poseDetection UMD after tfjs
