@@ -1,14 +1,16 @@
-// AR Back Wings — Spark Gaussian Splat version (FINAL)
-// ----------------------------------------------------
+// AR Back Wings — Spark Gaussian Splat (Safari-safe, no import map)
+// -----------------------------------------------------------------
+// Uses absolute URLs for all imports so older Safari versions work.
+// Adds iOS camera flags and user-gesture friendly startup.
 
-import * as THREE from 'three';
-import { SplatMesh /*, SparkRenderer*/ } from '@sparkjsdev/spark';
-import * as tf from '@tensorflow/tfjs';
-import * as poseDetection from '@tensorflow-models/pose-detection';
+import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js';
+import { SplatMesh /*, SparkRenderer*/ } from 'https://sparkjs.dev/releases/spark/0.1.9/spark.module.js';
+import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.es2017.js';
+import * as poseDetection from 'https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.esm.js';
 
 // --------------------- Config --------------------------
-const SPLAT_PATH = 'assets/wings.spz';
-const CAMERA_MODE = 'environment';     // 'environment' | 'user'
+const SPLAT_PATH = '/assets/wings.spz'; // absolute path is safest on Safari hosting
+const CAMERA_MODE = 'environment';      // 'environment' | 'user'
 const MIN_SHOULDER_SCORE = 0.4;
 const SMOOTHING_FACTOR = 0.4;
 
@@ -103,10 +105,18 @@ window.addEventListener('DOMContentLoaded', () => {
 async function startAR() {
   debugLogger.updateStatus('status', 'Starting…');
 
+  // iOS/Safari video flags — MUCH more reliable
+  video = document.getElementById('video');
+  video.setAttribute('playsinline', 'true');
+  video.setAttribute('webkit-playsinline', 'true');
+  video.muted = true; // even though we don't use audio, helps autoplay policies
+
+  // Secure context is required
   if (!window.isSecureContext) {
     throw new Error('This page is not in a secure context. Use HTTPS or http://localhost for camera access.');
   }
 
+  // TFJS backend
   try {
     await tf.setBackend('webgl');
     await tf.ready();
@@ -116,13 +126,9 @@ async function startAR() {
   }
 
   canvas = document.getElementById('output-canvas');
-  ctx = canvas?.getContext('2d', { alpha: true });
-  video = document.getElementById('video');
-  if (!canvas || !ctx || !video) {
-    throw new Error('Missing required DOM elements (#output-canvas, #video).');
-  }
+  ctx = canvas.getContext('2d', { alpha: true });
 
-  // Camera stream
+  // Camera stream (Safari prefers ideal sizes but will pick supported ones)
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
@@ -133,13 +139,19 @@ async function startAR() {
       }
     });
     video.srcObject = stream;
+
+    // iOS sometimes needs explicit play() after assigning srcObject
+    await video.play();
   } catch (e) {
     debugLogger.log('error', `getUserMedia error: ${e?.message ?? e}`);
-    debugLogger.updateStatus('video', '❌ Permission denied');
+    debugLogger.updateStatus('video', '❌ Permission / camera error');
     throw e;
   }
 
-  await new Promise(resolve => { video.onloadedmetadata = () => { video.play(); resolve(); }; });
+  await new Promise(resolve => {
+    if (video.readyState >= 2) return resolve();
+    video.onloadedmetadata = () => resolve();
+  });
   debugLogger.updateStatus('video', `✅ ${video.videoWidth}x${video.videoHeight}`);
 
   // Sizing
@@ -150,10 +162,10 @@ async function startAR() {
   // Three.js + Spark
   await setupThree();
 
-  // Pose model (force runtime:'tfjs')
+  // Pose model (tfjs runtime only → no mediapipe mapping needed)
   debugLogger.log('info', '🧠 Loading Pose Detection model…');
   if (!poseDetection?.movenet?.modelType || !poseDetection?.SupportedModels?.MoveNet) {
-    throw new Error('pose-detection ESM not loaded: ensure import map points to pose-detection.esm.js');
+    throw new Error('pose-detection ESM failed to load (Safari). Check the CDN URL in script imports.');
   }
 
   const detectorConfig = {
@@ -194,7 +206,7 @@ function resizeToVideo() {
     renderer.setSize(canvas.width, canvas.height, false);
   }
 
-  debugLogger.log('info', `Canvas set to ${canvas.width}×${canvas.height} (CSS ${w}×${h}) DPR ${dpr}`);
+  debugLogger.log('info', `Canvas ${canvas.width}×${canvas.height} (CSS ${w}×${h}) DPR ${dpr}`);
 }
 
 // -------------------- Three + Spark -------------------
@@ -214,7 +226,7 @@ async function setupThree() {
   camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000);
   camera.position.set(0, 0, 0);
 
-  // Optional: SparkRenderer for DOF/post effects
+  // Optional SparkRenderer for DOF/post
   // const spark = new SparkRenderer({ renderer });
   // camera.add(spark);
 
@@ -237,10 +249,10 @@ async function setupThree() {
     splatLoaded = true;
 
     debugLogger.updateStatus('asset', '✅ Loaded');
-    debugLogger.log('success', `Splat ready — size: ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}`);
+    debugLogger.log('success', `Splat size: ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}`);
   } catch (err) {
     debugLogger.updateStatus('asset', '❌ Load failed');
-    debugLogger.log('error', `Splat load error: ${err?.message ?? err} | URL tried: ${SPLAT_PATH}`);
+    debugLogger.log('error', `Splat load error: ${err?.message ?? err} | URL: ${SPLAT_PATH}`);
   }
 }
 
@@ -257,12 +269,14 @@ async function renderLoop() {
     lastFpsUpdate = now;
   }
 
+  // Draw camera image first
   ctx.save();
   if (CAMERA_MODE === 'user') ctx.scale(-1, 1);
   const drawX = CAMERA_MODE === 'user' ? -canvas.width : 0;
   ctx.drawImage(video, drawX, 0, canvas.width, canvas.height);
   ctx.restore();
 
+  // Pose estimation
   try {
     if (poseModel && video.readyState === video.HAVE_ENOUGH_DATA) {
       const poses = await poseModel.estimatePoses(video);
@@ -288,6 +302,7 @@ async function renderLoop() {
     debugLogger.log('warning', `Pose estimate warning: ${e?.message ?? e}`);
   }
 
+  // Render 3D and composite
   if (renderer && camera) {
     renderer.render(scene, camera);
     ctx.drawImage(renderer.domElement, 0, 0);
