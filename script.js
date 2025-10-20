@@ -1,10 +1,5 @@
-// AR Back Wings — Spark Gaussian Splat version (FINAL, sanity-checked)
-// -------------------------------------------------------------------
-// Notes:
-// - Requires index.html import map that points to pose-detection.esm.js (ESM build).
-// - Forces Pose Detection runtime to 'tfjs' so no @mediapipe/pose mapping is needed.
-// - Draws Three.js (Spark Splat) into a WebGL canvas, then composites onto a 2D canvas.
-// - Includes robust guards & debug logs to help diagnose issues quickly.
+// AR Back Wings — Spark Gaussian Splat version (FINAL)
+// ----------------------------------------------------
 
 import * as THREE from 'three';
 import { SplatMesh /*, SparkRenderer*/ } from '@sparkjsdev/spark';
@@ -12,7 +7,7 @@ import * as tf from '@tensorflow/tfjs';
 import * as poseDetection from '@tensorflow-models/pose-detection';
 
 // --------------------- Config --------------------------
-const SPLAT_PATH = 'assets/wings.spz'; // If your file name/path differs, change this.
+const SPLAT_PATH = 'assets/wings.spz';
 const CAMERA_MODE = 'environment';     // 'environment' | 'user'
 const MIN_SHOULDER_SCORE = 0.4;
 const SMOOTHING_FACTOR = 0.4;
@@ -108,12 +103,10 @@ window.addEventListener('DOMContentLoaded', () => {
 async function startAR() {
   debugLogger.updateStatus('status', 'Starting…');
 
-  // Security check for getUserMedia
   if (!window.isSecureContext) {
     throw new Error('This page is not in a secure context. Use HTTPS or http://localhost for camera access.');
   }
 
-  // Choose TFJS backend
   try {
     await tf.setBackend('webgl');
     await tf.ready();
@@ -125,7 +118,6 @@ async function startAR() {
   canvas = document.getElementById('output-canvas');
   ctx = canvas?.getContext('2d', { alpha: true });
   video = document.getElementById('video');
-
   if (!canvas || !ctx || !video) {
     throw new Error('Missing required DOM elements (#output-canvas, #video).');
   }
@@ -147,9 +139,7 @@ async function startAR() {
     throw e;
   }
 
-  await new Promise(resolve => {
-    video.onloadedmetadata = () => { video.play(); resolve(); };
-  });
+  await new Promise(resolve => { video.onloadedmetadata = () => { video.play(); resolve(); }; });
   debugLogger.updateStatus('video', `✅ ${video.videoWidth}x${video.videoHeight}`);
 
   // Sizing
@@ -160,16 +150,14 @@ async function startAR() {
   // Three.js + Spark
   await setupThree();
 
-  // -------- Pose model (force runtime:'tfjs' to avoid @mediapipe/pose) --------
+  // Pose model (force runtime:'tfjs')
   debugLogger.log('info', '🧠 Loading Pose Detection model…');
-
-  // Guard: ensure ESM build exported movenet
   if (!poseDetection?.movenet?.modelType || !poseDetection?.SupportedModels?.MoveNet) {
     throw new Error('pose-detection ESM not loaded: ensure import map points to pose-detection.esm.js');
   }
 
   const detectorConfig = {
-    runtime: 'tfjs', // ⭐ prevents @mediapipe/pose bare specifier usage
+    runtime: 'tfjs',
     modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
   };
 
@@ -215,7 +203,7 @@ async function setupThree() {
 
   renderer = new THREE.WebGLRenderer({
     alpha: true,
-    antialias: false,                // splats don't benefit; improves perf
+    antialias: false,
     preserveDrawingBuffer: true,
     powerPreference: 'high-performance'
   });
@@ -238,10 +226,9 @@ async function setupThree() {
     wingsMesh = new SplatMesh({ url: SPLAT_PATH });
     scene.add(wingsMesh);
 
-    await wingsMesh.initialized; // ensure ready
+    await wingsMesh.initialized;
 
-    // Bounding box for scale normalization
-    const bbox = wingsMesh.getBoundingBox(true); // centers only = tighter
+    const bbox = wingsMesh.getBoundingBox(true);
     const size = new THREE.Vector3();
     bbox.getSize(size);
     splatBoundingBoxSize = size;
@@ -262,7 +249,6 @@ async function renderLoop() {
   if (!isRunning) return;
   requestAnimationFrame(renderLoop);
 
-  // FPS counter
   frameCount++;
   const now = performance.now();
   if (now - lastFpsUpdate >= 1000) {
@@ -271,14 +257,12 @@ async function renderLoop() {
     lastFpsUpdate = now;
   }
 
-  // Draw camera image first
   ctx.save();
   if (CAMERA_MODE === 'user') ctx.scale(-1, 1);
   const drawX = CAMERA_MODE === 'user' ? -canvas.width : 0;
   ctx.drawImage(video, drawX, 0, canvas.width, canvas.height);
   ctx.restore();
 
-  // Pose estimation
   try {
     if (poseModel && video.readyState === video.HAVE_ENOUGH_DATA) {
       const poses = await poseModel.estimatePoses(video);
@@ -304,7 +288,6 @@ async function renderLoop() {
     debugLogger.log('warning', `Pose estimate warning: ${e?.message ?? e}`);
   }
 
-  // Render 3D to WebGL canvas, then composite to 2D
   if (renderer && camera) {
     renderer.render(scene, camera);
     ctx.drawImage(renderer.domElement, 0, 0);
@@ -313,20 +296,16 @@ async function renderLoop() {
 
 // ----------- Pose → Splat transform (core) -------------
 function applyPoseToSplat(ls, rs, splat) {
-  // Shoulder distance & angle in screen space
   const dx = rs.x - ls.x;
   const dy = rs.y - ls.y;
-  const dist = Math.hypot(dx, dy) || 1e-6; // prevent div-by-zero
+  const dist = Math.hypot(dx, dy) || 1e-6;
   const angle = Math.atan2(dy, dx);
 
-  // Upper-back anchor (slightly below shoulder mid-point)
   const spine = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 + dist * 0.15 };
 
-  // Approximate depth & scale from shoulder span
   const depth = -2.0 - (150 / Math.max(1, dist));
   let scale = Math.max(0.5, dist / 150);
 
-  // Convert normalized screen coords to world space in front of camera
   let nx = (spine.x / video.videoWidth) * 2 - 1;
   let ny = -(spine.y / video.videoHeight) * 2 + 1;
   if (CAMERA_MODE === 'user') nx = -nx;
@@ -334,14 +313,12 @@ function applyPoseToSplat(ls, rs, splat) {
   const target = new THREE.Vector3(nx, ny, 0.5);
   target.unproject(camera);
   const dir = target.sub(camera.position).normalize();
-  const distance = Math.abs(depth / (dir.z || 1e-6)); // avoid div-by-zero
+  const distance = Math.abs(depth / (dir.z || 1e-6));
   const world = camera.position.clone().add(dir.multiplyScalar(distance));
 
-  // Smooth position
   smoothedWingsPos.lerp(world, SMOOTHING_FACTOR);
   splat.position.copy(smoothedWingsPos);
 
-  // Scale using average bbox size to normalize across different assets
   let scaleFactor = scale * 0.5;
   if (splatBoundingBoxSize) {
     const avg = (splatBoundingBoxSize.x + splatBoundingBoxSize.y + splatBoundingBoxSize.z) / 3;
@@ -350,10 +327,9 @@ function applyPoseToSplat(ls, rs, splat) {
   if (!Number.isFinite(scaleFactor) || scaleFactor <= 0) scaleFactor = 1.0;
   splat.scale.setScalar(scaleFactor);
 
-  // Orientation: slight downward pitch, yaw/roll from body angle
   const bodyRot = (CAMERA_MODE === 'user') ? -angle : angle;
-  smoothedWingsRot.x += (-0.2 - smoothedWingsRot.x) * SMOOTHING_FACTOR; // gentle forward tilt
-  smoothedWingsRot.y += (bodyRot * 0.5 - smoothedWingsRot.y) * SMOOTHING_FACTOR; // yaw follow
-  smoothedWingsRot.z += (bodyRot * 0.2 - smoothedWingsRot.z) * SMOOTHING_FACTOR; // roll follow
+  smoothedWingsRot.x += (-0.2 - smoothedWingsRot.x) * SMOOTHING_FACTOR;
+  smoothedWingsRot.y += (bodyRot * 0.5 - smoothedWingsRot.y) * SMOOTHING_FACTOR;
+  smoothedWingsRot.z += (bodyRot * 0.2 - smoothedWingsRot.z) * SMOOTHING_FACTOR;
   splat.rotation.copy(smoothedWingsRot);
 }
