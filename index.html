@@ -3,58 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>AR Back Wings (Gaussian Splatting)</title>
+    <title>Spark.js AR Gaussian Splatting</title>
     
     <link rel="stylesheet" href="style.css">
-
-    <script type="importmap">
-{
-    "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-
-        "splat": "https://cdn.jsdelivr.net/npm/splat.js/dist/splat.module.js",
-        
-        "@tensorflow/tfjs": "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.es2017.js",
-        "@tensorflow-models/pose-detection": "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.js"
-    }
-}
-</script>
     
-</script>
-</script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r166/three.min.js"></script>
+
+    <script type="module">
+        import { SplatMesh, SparkRenderer } from "https://sparkjs.dev/dist/spark.esm.js";
+        // Expose to the global scope for the main script to use
+        window.SplatMesh = SplatMesh;
+        window.SparkRenderer = SparkRenderer;
+        window.THREE = THREE; // Ensure THREE is globally available if needed
+    </script>
 </head>
 <body>
-    <canvas id="output-canvas"></canvas>
-    
-    <video id="video" autoplay playsinline></video>
+    <div id="ar-container">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="output-canvas"></canvas>
+        <div id="three-container"></div>
+    </div>
 
-    <div id="instructions">
-        <div id="instructions-content">
-            <h2>📱 AR Back Wings</h2>
-            <p>Point camera at someone's back!</p>
-            <button id="start-btn">Start AR Experience</button>
-        </div>
+    <div id="instructions" class="overlay">
+        <h2>AR Angel Wings Demo</h2>
+        <p>Tap to start the camera and load the AI model.</p>
+        <button id="start-btn">START AR</button>
+        <p class="note">*Requires HTTPS and camera permissions.</p>
     </div>
 
     <div id="debug-panel">
-        <div id="debug-header">
-            <h3>Debug</h3>
-            <button id="toggle-debug">−</button>
-            <button id="clear-debug">Clear</button>
-        </div>
-        <div id="debug-content">
-            <div id="debug-status">
-                <div><strong>Status:</strong> <span id="status-text">Loading...</span></div>
-                <div><strong>Camera:</strong> <span id="video-status">Not started</span></div>
-                <div><strong>Model:</strong> <span id="model-status">Not loaded</span></div>
-                <div><strong>Shoulders:</strong> <span id="pose-status">Not detected</span></div>
-                <div><strong>Asset:</strong> <span id="asset-status">Loading splat...</span></div>
-                <div><strong>FPS:</strong> <span id="fps-counter">0</span></div>
-            </div>
-            <div id="debug-logs"></div>
-        </div>
+        <button id="toggle-debug" class="unselectable">−</button>
+        <button id="clear-debug" style="float: right;">Clear</button>
+        <strong>Status:</strong> <span id="status-text">Ready</span> | FPS: <span id="fps-counter">0.0</span><br>
+        <div class="debug-status">Video: <span id="video-status"></span> | Model: <span id="model-status"></span></div>
+        <div class="debug-status">Pose: <span id="pose-status"></span> | Asset: <span id="asset-status"></span></div>
+        <hr>
+        <div id="debug-logs"></div>
     </div>
 
     <script type="module" src="script.js"></script>
