@@ -1,69 +1,58 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<meta name="mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<title>AR Back Wings</title>
-<link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>AR Back Wings</title>
+  <link rel="stylesheet" href="style.css" />
 
+  <!-- Import map -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js",
+      "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.9/spark.module.js",
 
-<!-- Import map for modules -->
-<script type="importmap">
-{
-"imports": {
-"three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js",
-"@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.9/spark.module.js",
-
-
-"@tensorflow/tfjs": "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.es2017.js",
-"@tensorflow-models/pose-detection": "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.js"
-}
-}
-</script>
+      "@tensorflow/tfjs": "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.es2017.js",
+      "@tensorflow-models/pose-detection": "https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.esm.js"
+    }
+  }
+  </script>
 </head>
 <body>
-<!-- 2D output canvas (composited: camera video + WebGL splats) -->
-<canvas id="output-canvas"></canvas>
+  <canvas id="output-canvas"></canvas>
+  <video id="video" autoplay playsinline></video>
 
+  <div id="instructions">
+    <div id="instructions-content">
+      <h2>📱 AR Back Wings</h2>
+      <p>Point your camera at someone’s back, then tap Start.</p>
+      <button id="start-btn">Start AR Experience</button>
+      <p class="small">If nothing shows, allow camera access and try again.</p>
+    </div>
+  </div>
 
-<!-- Hidden video element as camera input for pose model -->
-<video id="video" autoplay playsinline></video>
+  <div id="debug-panel">
+    <div id="debug-header">
+      <h3>Debug</h3>
+      <button id="toggle-debug">−</button>
+      <button id="clear-debug">Clear</button>
+    </div>
+    <div id="debug-content">
+      <div id="debug-status">
+        <div><strong>Status:</strong> <span id="status-text">Idle</span></div>
+        <div><strong>Camera:</strong> <span id="video-status">Not started</span></div>
+        <div><strong>Model:</strong> <span id="model-status">Not loaded</span></div>
+        <div><strong>Shoulders:</strong> <span id="pose-status">Not detected</span></div>
+        <div><strong>Asset:</strong> <span id="asset-status">Not loaded</span></div>
+        <div><strong>FPS:</strong> <span id="fps-counter">0</span></div>
+      </div>
+      <div id="debug-logs"></div>
+    </div>
+  </div>
 
-
-<!-- Overlay: instructions / start gate -->
-<div id="instructions">
-<div id="instructions-content">
-<h2>📱 AR Back Wings</h2>
-<p>Point your camera at someone’s back, then tap Start.</p>
-<button id="start-btn">Start AR Experience</button>
-<p class="small">Tip: allow camera access and stand 1–2m away for best results.</p>
-</div>
-</div>
-
-
-<!-- Debug panel -->
-<div id="debug-panel">
-<div id="debug-header">
-<h3>Debug</h3>
-<button id="toggle-debug">−</button>
-<button id="clear-debug">Clear</button>
-</div>
-<div id="debug-content">
-<div id="debug-status">
-<div><strong>Status:</strong> <span id="status-text">Idle</span></div>
-<div><strong>Camera:</strong> <span id="video-status">Not started</span></div>
-<div><strong>Model:</strong> <span id="model-status">Not loaded</span></div>
-<div><strong>Shoulders:</strong> <span id="pose-status">Not detected</span></div>
-<div><strong>Asset:</strong> <span id="asset-status">Not loaded</span></div>
-<div><strong>FPS:</strong> <span id="fps-counter">0</span></div>
-</div>
-<div id="debug-logs"></div>
-</div>
-</div>
-
-
-<script type="module" src="script.js"></script>
+  <script type="module" src="script.js"></script>
 </body>
 </html>
