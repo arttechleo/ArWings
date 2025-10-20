@@ -4,9 +4,13 @@
 // Adds iOS camera flags and user-gesture friendly startup.
 
 import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js';
-import { SplatMesh /*, SparkRenderer*/ } from 'https://sparkjs.dev/releases/spark/0.1.9/spark.module.js';
-import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.es2017.js';
-import * as poseDetection from 'https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.esm.js';
+import { SplatMesh } from 'https://sparkjs.dev/releases/spark/0.1.9/spark.module.js';
+import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js';
+
+// Load poseDetection UMD after tfjs
+await import('https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js');
+const poseDetection = window.poseDetection;
+
 
 // --------------------- Config --------------------------
 const SPLAT_PATH = '/assets/wings.spz'; // absolute path is safest on Safari hosting
